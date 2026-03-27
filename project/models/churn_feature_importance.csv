@@ -1,0 +1,8 @@
+Feature,Importance
+num__Recency,14.927731777825372
+num__Monetary,1.294586293167249
+num__PredictedCLV,1.0439139121446224
+cat__ClusterLabel_At Risk,0.4112016031228071
+cat__ClusterLabel_Loyal Customers,0.17830980808731328
+num__Frequency,0.16155490371335698
+cat__ClusterLabel_Champions,0.0018421439913795666
