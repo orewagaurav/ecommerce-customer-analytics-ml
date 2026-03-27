@@ -9,3 +9,4 @@ shap==0.51.0
 streamlit==1.55.0
 plotly==6.0.1
 jupyter==1.1.1
+watchdog==6.0.0
