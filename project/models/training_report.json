@@ -1,0 +1,43 @@
+{
+  "rfm": {
+    "optimal_k": 3,
+    "label_map": {
+      "2": "Champions",
+      "1": "Loyal Customers",
+      "0": "At Risk"
+    }
+  },
+  "clv": {
+    "best_model": "LinearRegression",
+    "metrics": {
+      "LinearRegression": {
+        "RMSE": 5620.7746650512945,
+        "R2": 0.03580921853601915
+      },
+      "RandomForestRegressor": {
+        "RMSE": 5661.984036684441,
+        "R2": 0.02161923414684286
+      }
+    }
+  },
+  "churn": {
+    "best_model": "LogisticRegression",
+    "threshold_days": 90,
+    "metrics": {
+      "LogisticRegression": {
+        "Accuracy": 0.9897959183673469,
+        "Precision": 1.0,
+        "Recall": 0.979933110367893,
+        "F1": 0.9898648648648649,
+        "ROC_AUC": 1.0
+      },
+      "RandomForestClassifier": {
+        "Accuracy": 1.0,
+        "Precision": 1.0,
+        "Recall": 1.0,
+        "F1": 1.0,
+        "ROC_AUC": 0.9999999999999999
+      }
+    }
+  }
+}

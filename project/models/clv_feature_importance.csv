@@ -1,0 +1,44 @@
+Feature,Importance
+cat__Country_EIRE,9574.293239882649
+cat__Country_Singapore,3340.531027420724
+num__Monetary,3245.5682943877637
+cat__Country_Japan,1324.8774484700932
+cat__Country_Norway,1145.5022868524072
+cat__Country_Iceland,881.5430780433916
+cat__Country_Greece,780.3427205377841
+cat__Country_Switzerland,537.0498202165256
+cat__Country_Italy,479.76946177069993
+cat__Country_Belgium,445.67540014179525
+cat__Country_Israel,434.2360609055331
+cat__Country_Denmark,425.47802752156423
+cat__Country_France,403.2715160588387
+cat__Country_Finland,385.3773412078737
+cat__Country_Czech Republic,357.3929482647074
+cat__Country_Cyprus,298.9132491878896
+cat__Country_Nigeria,297.9300468583298
+cat__Country_Germany,266.3049671160966
+cat__Country_United Arab Emirates,256.85379704684425
+num__Frequency,253.88112366334732
+cat__Country_Australia,252.4874448048733
+cat__Country_Netherlands,244.22462662862304
+cat__Country_United Kingdom,237.92401824593787
+cat__Country_USA,222.6119479441227
+cat__Country_Austria,221.03737239119053
+cat__Country_Malta,193.4035538439437
+cat__Country_Spain,166.92957148994896
+cat__Country_Portugal,157.9918267034426
+cat__Country_Korea,141.39684995111242
+cat__Country_Unspecified,139.17391333740682
+cat__Country_Thailand,137.13728868514505
+cat__Country_Saudi Arabia,108.11850464312408
+num__AverageBasketSize,93.42496044064887
+num__Recency,88.01556677992055
+cat__Country_Bahrain,78.7891686477592
+cat__Country_Channel Islands,65.5778409741494
+cat__Country_European Community,64.2388883240789
+cat__Country_Sweden,53.0573480420778
+cat__Country_Canada,51.131678059516815
+num__PurchaseFrequency,43.160332486079724
+cat__Country_Poland,32.7206298936866
+cat__Country_Lebanon,22.07584549135027
+cat__Country_Brazil,18.36326263150373
