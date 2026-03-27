@@ -85,6 +85,7 @@ project/
 ├── app/
 │   └── streamlit_app.py
 ├── data/
+│   └── online_retail_II.csv
 │   └── processed_online_retail_II.csv
 ├── models/
 │   ├── rfm_kmeans_artifacts.joblib
