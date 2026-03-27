@@ -1,2 +1,6 @@
 *.csv
 data/
+
+# Raw and processed dataset files
+data/online_retail_II.csv
+data/processed_online_retail_II.csv

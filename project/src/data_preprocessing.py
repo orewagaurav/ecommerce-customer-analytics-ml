@@ -103,7 +103,7 @@ def main() -> None:
     parser.add_argument(
         "--input_csv",
         type=Path,
-        default=Path("online_retail_II.csv"),
+        default=Path("project/data/online_retail_II.csv"),
         help="Path to the raw Online Retail II CSV",
     )
     parser.add_argument(

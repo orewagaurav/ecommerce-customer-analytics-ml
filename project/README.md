@@ -25,9 +25,10 @@ This repository solves all four in one pipeline and exposes outputs through a da
 ---
 
 ## 2. Dataset
-
+- Download from Kaggle:
+- https://www.kaggle.com/datasets/mashlyn/online-retail-ii-uci
 - Source: Online Retail II (UCI / Kaggle format)
-- File expected at repository root: online_retail_II.csv
+- File location: project/data/online_retail_II.csv
 - Core columns used:
   - Invoice
   - StockCode
@@ -38,12 +39,13 @@ This repository solves all four in one pipeline and exposes outputs through a da
   - Customer ID
   - Country
 
+
 ---
 
 ## 3. End-to-End Architecture
 
 ```text
-Raw CSV (online_retail_II.csv)
+Raw CSV (project/data/online_retail_II.csv)
       |
       v
 Data Preprocessing
@@ -293,7 +295,7 @@ Implemented in app/streamlit_app.py with 5 pages:
 
 ## 8. How to Run Locally
 
-Run commands from repository root (same folder where online_retail_II.csv exists).
+Run commands from repository root.
 
 ### Step 1: Create and activate virtual environment
 ```bash
@@ -309,7 +311,7 @@ pip install -r project/requirements.txt
 ### Step 3: Preprocess data
 ```bash
 python project/src/data_preprocessing.py \
-  --input_csv online_retail_II.csv \
+  --input_csv project/data/online_retail_II.csv \
   --output_csv project/data/processed_online_retail_II.csv
 ```
 
@@ -334,7 +336,7 @@ Then open the URL printed in terminal (typically http://localhost:8501).
 ## 9. One-Line Run (after repository is cloned)
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate && pip install -r project/requirements.txt && python project/src/data_preprocessing.py --input_csv online_retail_II.csv --output_csv project/data/processed_online_retail_II.csv && python project/src/train_models.py --processed_csv project/data/processed_online_retail_II.csv --models_dir project/models --horizon_days 90 --churn_days 90 && streamlit run project/app/streamlit_app.py
+python3 -m venv .venv && source .venv/bin/activate && pip install -r project/requirements.txt && python project/src/data_preprocessing.py --input_csv project/data/online_retail_II.csv --output_csv project/data/processed_online_retail_II.csv && python project/src/train_models.py --processed_csv project/data/processed_online_retail_II.csv --models_dir project/models --horizon_days 90 --churn_days 90 && streamlit run project/app/streamlit_app.py
 ```
 
 ---
@@ -356,7 +358,7 @@ python3 -m venv .venv && source .venv/bin/activate && pip install -r project/req
   - Repo: your repository
   - Branch: main
   - App file: project/app/streamlit_app.py
-4. Add online_retail_II.csv to repo or configure remote data access
+4. Add project/data/online_retail_II.csv to repo or configure remote data access
 5. Deploy
 
 Deployment link:
@@ -378,7 +380,7 @@ Deployment link:
     streamlit run project/app/streamlit_app.py --server.port 8503
 
 4. Dataset not found
-  - Confirm online_retail_II.csv exists at repository root
+  - Confirm project/data/online_retail_II.csv exists
 
 ---
 
