@@ -1,6 +1,8 @@
+# Ignore all CSV files by default
 *.csv
-data/
 
-# Raw and processed dataset files
-data/online_retail_II.csv
-data/processed_online_retail_II.csv
+# Ignore data folder contents by default
+data/*
+
+# Keep processed dataset in git for hosted inference/dashboard runtime
+!data/processed_online_retail_II.csv
