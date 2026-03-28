@@ -2,16 +2,46 @@
 
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
+import subprocess
+import sys
 from typing import Dict
+
+
+def _ensure_runtime_dependencies() -> None:
+    """Install missing runtime packages when Streamlit Cloud skips requirements resolution."""
+    required_modules = {
+        "joblib": "joblib",
+        "plotly": "plotly",
+        "sklearn": "scikit-learn",
+        "xgboost": "xgboost",
+        "shap": "shap",
+    }
+    missing_packages = [
+        package_name
+        for module_name, package_name in required_modules.items()
+        if importlib.util.find_spec(module_name) is None
+    ]
+    if not missing_packages:
+        return
+
+    cmd = [sys.executable, "-m", "pip", "install", *missing_packages]
+    completed = subprocess.run(cmd, capture_output=True, text=True)
+    if completed.returncode != 0:
+        raise RuntimeError(
+            "Failed to install runtime dependencies: "
+            f"{' '.join(missing_packages)}\n{completed.stderr.strip()}"
+        )
+
+
+_ensure_runtime_dependencies()
 
 import joblib
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
-
-import sys
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
