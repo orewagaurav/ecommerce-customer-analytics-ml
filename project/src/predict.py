@@ -20,6 +20,8 @@ from src.feature_engineering import (
     build_customer_aggregates,
     make_recommendation_actions,
 )
+from src.explainability import explain_churn_prediction, explain_clv_prediction
+from src.recommendation_engine import get_recommendation
 
 
 def load_artifacts(models_dir: Path) -> Dict:
@@ -95,6 +97,16 @@ def _importance_reasons(customer_row: pd.Series, importance_df: pd.DataFrame, ma
     return reasons
 
 
+def _format_top_shap(top_rows: List[Dict[str, float | str]]) -> List[str]:
+    """Convert SHAP top features into compact readable bullet lines."""
+    formatted: List[str] = []
+    for row in top_rows:
+        formatted.append(
+            f"{row['Feature']} ({row['Direction']}, SHAP={row['Contribution']:.4f})"
+        )
+    return formatted
+
+
 def predict_customer(customer_id: int, processed_csv: Path, models_dir: Path) -> Dict:
     """Predict cluster label, CLV, churn probability, and recommendations."""
     transactions = pd.read_csv(processed_csv)
@@ -117,6 +129,7 @@ def predict_customer(customer_id: int, processed_csv: Path, models_dir: Path) ->
         }
     ])
     clv_prediction = float(clv_model.predict(clv_input)[0])
+    clv_shap = explain_clv_prediction(clv_model, clv_input, top_n=3)
 
     churn_model = artifacts["churn"]["model"]
     churn_input = pd.DataFrame([
@@ -129,6 +142,7 @@ def predict_customer(customer_id: int, processed_csv: Path, models_dir: Path) ->
         }
     ])
     churn_probability = float(churn_model.predict_proba(churn_input)[:, 1][0])
+    churn_shap = explain_churn_prediction(churn_model, churn_input, top_n=3)
 
     clv_high_threshold = float(artifacts["clv"].get("high_clv_threshold", 0.0))
     actions = make_recommendation_actions(
@@ -137,19 +151,31 @@ def predict_customer(customer_id: int, processed_csv: Path, models_dir: Path) ->
         churn_probability=churn_probability,
         clv_high_threshold=clv_high_threshold,
     )
+    decision = get_recommendation(
+        {
+            "PredictedCLV": clv_prediction,
+            "ChurnProbability": churn_probability,
+            "ClusterLabel": cluster_label,
+        }
+    )
 
-    clv_reasons = _importance_reasons(row, artifacts["clv_importance"])
-    churn_reasons = _importance_reasons(row, artifacts["churn_importance"])
+    clv_reasons = [clv_shap["explanation"]] + _format_top_shap(clv_shap["top_features"])
+    churn_reasons = [churn_shap["explanation"]] + _format_top_shap(churn_shap["top_features"])
 
     return {
         "CustomerID": int(customer_id),
         "ClusterLabel": cluster_label,
         "PredictedCLV": clv_prediction,
         "ChurnProbability": churn_probability,
+        "Decision": decision,
         "RecommendationActions": actions,
         "Explanations": {
             "CLV": clv_reasons,
             "Churn": churn_reasons,
+        },
+        "ShapTopFeatures": {
+            "CLV": clv_shap["top_features"],
+            "Churn": churn_shap["top_features"],
         },
     }
 
