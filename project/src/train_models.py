@@ -40,6 +40,11 @@ from src.feature_engineering import (
     make_recommendation_actions,
     run_rfm_clustering,
 )
+from src.explainability import (
+    explain_churn_prediction,
+    explain_clv_prediction,
+    save_feature_importance_plot,
+)
 
 try:
     from xgboost import XGBClassifier, XGBRegressor
@@ -234,26 +239,6 @@ def _train_churn_model(churn_df: pd.DataFrame) -> Tuple[Pipeline, Dict[str, Dict
     return best_model, metrics, X
 
 
-def _extract_feature_importance(model: Pipeline, feature_df: pd.DataFrame) -> pd.DataFrame:
-    """Extract built-in feature importance from final estimator when available."""
-    transformed_names = model.named_steps["preprocessor"].get_feature_names_out()
-    estimator = model.named_steps["model"]
-
-    if hasattr(estimator, "feature_importances_"):
-        values = estimator.feature_importances_
-    elif hasattr(estimator, "coef_"):
-        values = np.abs(estimator.coef_[0]) if getattr(estimator.coef_, "ndim", 1) > 1 else np.abs(estimator.coef_)
-    else:
-        values = np.zeros(len(transformed_names), dtype=float)
-
-    if len(values) != len(transformed_names):
-        values = np.resize(values, len(transformed_names))
-
-    out = pd.DataFrame({"Feature": transformed_names, "Importance": values})
-    out = out.sort_values("Importance", ascending=False).reset_index(drop=True)
-    return out
-
-
 def _save_elbow_and_cluster_plot(rfm_df: pd.DataFrame, inertia_by_k: Dict[int, float], models_dir: Path) -> None:
     models_dir.mkdir(parents=True, exist_ok=True)
 
@@ -305,19 +290,30 @@ def train_all_models(processed_csv: Path, models_dir: Path, horizon_days: int, c
     # Module 2: CLV regression
     clv_df = build_clv_dataset(transactions, horizon_days=horizon_days)
     clv_model, clv_metrics, clv_X = _train_clv_model(clv_df)
-    clv_predictions = clv_model.predict(clv_df[["Recency", "Frequency", "Monetary", "AverageBasketSize", "PurchaseFrequency", "Country"]])
+    clv_feature_cols = ["Recency", "Frequency", "Monetary", "AverageBasketSize", "PurchaseFrequency", "Country"]
+    clv_predictions = clv_model.predict(clv_df[clv_feature_cols])
 
     clv_pred_df = clv_df[["CustomerID"]].copy()
     clv_pred_df["PredictedCLV"] = clv_predictions
 
-    clv_feature_importance = _extract_feature_importance(clv_model, clv_X)
+    clv_shap = explain_clv_prediction(
+        model=clv_model,
+        X_sample=clv_df[clv_feature_cols].sample(min(2000, len(clv_df)), random_state=RANDOM_STATE),
+        top_n=3,
+    )
+    clv_feature_importance = clv_shap["feature_importance"]
     clv_feature_importance.to_csv(models_dir / "clv_feature_importance.csv", index=False)
+    save_feature_importance_plot(
+        clv_feature_importance,
+        models_dir / "clv_shap_importance.png",
+        title="CLV SHAP Feature Importance",
+    )
 
     best_clv_name = min(clv_metrics, key=lambda m: clv_metrics[m]["RMSE"])
     joblib.dump(
         {
             "model": clv_model,
-            "feature_columns": ["Recency", "Frequency", "Monetary", "AverageBasketSize", "PurchaseFrequency", "Country"],
+            "feature_columns": clv_feature_cols,
             "best_model": best_clv_name,
             "metrics": clv_metrics,
             "high_clv_threshold": float(np.percentile(clv_pred_df["PredictedCLV"], 75)),
@@ -335,14 +331,25 @@ def train_all_models(processed_csv: Path, models_dir: Path, horizon_days: int, c
     )
 
     churn_model, churn_metrics, churn_X = _train_churn_model(churn_df)
-    churn_feature_importance = _extract_feature_importance(churn_model, churn_X)
+    churn_feature_cols = ["Recency", "Frequency", "Monetary", "PredictedCLV", "ClusterLabel"]
+    churn_shap = explain_churn_prediction(
+        model=churn_model,
+        X_sample=churn_df[churn_feature_cols].sample(min(2000, len(churn_df)), random_state=RANDOM_STATE),
+        top_n=3,
+    )
+    churn_feature_importance = churn_shap["feature_importance"]
     churn_feature_importance.to_csv(models_dir / "churn_feature_importance.csv", index=False)
+    save_feature_importance_plot(
+        churn_feature_importance,
+        models_dir / "churn_shap_importance.png",
+        title="Churn SHAP Feature Importance",
+    )
 
     best_churn_name = max(churn_metrics, key=lambda m: churn_metrics[m]["ROC_AUC"])
     joblib.dump(
         {
             "model": churn_model,
-            "feature_columns": ["Recency", "Frequency", "Monetary", "PredictedCLV", "ClusterLabel"],
+            "feature_columns": churn_feature_cols,
             "best_model": best_churn_name,
             "metrics": churn_metrics,
             "threshold_days": used_threshold,
@@ -352,7 +359,7 @@ def train_all_models(processed_csv: Path, models_dir: Path, horizon_days: int, c
 
     customer_predictions = churn_df[["CustomerID", "Recency", "Frequency", "Monetary", "PredictedCLV", "ClusterLabel"]].copy()
     customer_predictions["ChurnProbability"] = churn_model.predict_proba(
-        customer_predictions[["Recency", "Frequency", "Monetary", "PredictedCLV", "ClusterLabel"]]
+        customer_predictions[churn_feature_cols]
     )[:, 1]
 
     high_clv_threshold = float(np.percentile(clv_pred_df["PredictedCLV"], 75))

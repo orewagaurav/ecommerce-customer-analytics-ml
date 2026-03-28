@@ -7,7 +7,8 @@ This project combines:
 2. Supervised regression for Customer Lifetime Value (CLV)
 3. Supervised classification for churn prediction
 4. Rule-based business recommendations
-5. Interactive Streamlit dashboard for business users
+5. SHAP-powered explainability for model transparency
+6. Interactive Streamlit dashboard for business users
 
 ---
 
@@ -73,6 +74,10 @@ RFM Clustering                   CLV Regression
       Recommendation Rules Engine
                |
                v
+            SHAP Explainability
+          (global + per-customer)
+               |
+               v
         Streamlit Dashboard (5 pages)
 ```
 
@@ -85,6 +90,7 @@ project/
 ├── app/
 │   └── streamlit_app.py
 ├── data/
+│   ├── online_retail_II.csv
 │   └── processed_online_retail_II.csv
 ├── models/
 │   ├── rfm_kmeans_artifacts.joblib
@@ -94,6 +100,8 @@ project/
 │   ├── customer_predictions.csv
 │   ├── clv_feature_importance.csv
 │   ├── churn_feature_importance.csv
+│   ├── clv_shap_importance.png
+│   ├── churn_shap_importance.png
 │   ├── elbow_plot.png
 │   ├── rfm_clusters_2d.png
 │   └── training_report.json
@@ -105,6 +113,8 @@ project/
 ├── src/
 │   ├── data_preprocessing.py
 │   ├── feature_engineering.py
+│   ├── recommendation_engine.py
+│   ├── explainability.py
 │   ├── train_models.py
 │   └── predict.py
 ├── requirements.txt
@@ -240,8 +250,8 @@ Saved outputs:
 - churn_model_artifacts.joblib
 - churn_feature_importance.csv
 
-### 6.6 Business Recommendation Layer
-Implemented in src/feature_engineering.py and used in src/predict.py
+### 6.6 Business Recommendation Layer (Feature 1)
+Implemented in src/recommendation_engine.py and used in src/predict.py
 
 Rules:
 1. If churn_probability > 0.7 → Offer Discount
@@ -249,25 +259,40 @@ Rules:
 3. If cluster label = At Risk → Send Retention Campaign
 4. Else fallback → Maintain Engagement
 
-### 6.7 Explainability
-Current explainability uses model-native feature importance:
-- Tree models: feature_importances_
-- Linear models: absolute coefficient magnitude
+Output fields:
+- Segment
+- PriorityLevel
+- RecommendedAction
+- RecommendedChannel
 
-For single-customer inference:
-- Top important feature categories are converted into plain-language reasons
-  (for example: recency days, monetary spend, CLV contribution)
+### 6.7 Explainability (Feature 2)
+Implemented in src/explainability.py and integrated in both training and prediction flow.
+
+Capabilities:
+1. Global explainability artifacts
+  - SHAP importance summary for CLV model
+  - SHAP importance summary for churn model
+2. Per-customer explanations at inference time
+  - Top SHAP contributing features for CLV
+  - Top SHAP contributing features for churn
+  - Human-readable explanation strings for dashboard users
+
+Saved outputs:
+- clv_feature_importance.csv
+- churn_feature_importance.csv
+- clv_shap_importance.png
+- churn_shap_importance.png
 
 ---
 
-## 7. Streamlit Dashboard
+## 7. Streamlit Dashboard (Feature 3 Upgrade)
 
 Implemented in app/streamlit_app.py with 5 pages:
 
 1. Overview Dashboard
-  - Revenue KPIs
+  - KPI cards for sales, customers, average order value
   - Monthly trend
-  - High churn risk percentage
+  - High churn risk percentage and cluster mix
 
 2. Customer Segmentation
   - Cluster distribution
@@ -275,21 +300,33 @@ Implemented in app/streamlit_app.py with 5 pages:
 
 3. CLV Prediction
   - Input customer ID
-  - Predicted CLV
-  - CLV feature importance + explanation
+  - Predicted CLV card
+  - Why this prediction? panel with SHAP top features
 
 4. Churn Prediction
   - Input customer ID
-  - Churn probability
-  - Churn feature importance + explanation
+  - Churn probability card
+  - Churn risk gauge
+  - Why this prediction? panel with SHAP top features
 
 5. Recommendations
   - Input customer ID
-  - Unified output:
+  - Unified decision output:
     - Cluster Label
     - Predicted CLV
     - Churn Probability
-    - Recommended Actions
+    - Priority level
+    - Recommended action + channel
+  - Integrated explanation context from SHAP signals
+
+### 7.1 Output Contract from predict.py
+For a given Customer ID, the prediction response now includes:
+- ClusterLabel
+- PredictedCLV
+- ChurnProbability
+- Decision (Segment, PriorityLevel, RecommendedAction, RecommendedChannel)
+- Explanations (human-readable CLV/churn reasons)
+- ShapTopFeatures (top contributors for CLV and churn)
 
 ---
 
@@ -337,6 +374,11 @@ Then open the URL printed in terminal (typically http://localhost:8501).
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate && pip install -r project/requirements.txt && python project/src/data_preprocessing.py --input_csv project/data/online_retail_II.csv --output_csv project/data/processed_online_retail_II.csv && python project/src/train_models.py --processed_csv project/data/processed_online_retail_II.csv --models_dir project/models --horizon_days 90 --churn_days 90 && streamlit run project/app/streamlit_app.py
+```
+
+Alternative launcher:
+```bash
+./run.sh
 ```
 
 ---
@@ -392,7 +434,8 @@ Implemented and connected end-to-end:
 3. CLV regression
 4. Churn classification
 5. Recommendation engine
-6. Streamlit dashboard
+6. SHAP explainability (global + per-customer)
+7. Streamlit dashboard (Feature 3 upgraded UI)
 
 This means you can now enter a Customer ID in the dashboard and directly get:
 - Cluster label
