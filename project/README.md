@@ -404,7 +404,7 @@ Alternative launcher:
 5. Deploy
 
 Deployment link:
-- Add your live URL here after deployment
+- https://ecommerce-customer-analytics-ml-iw5v4ndz7tnjtf3zxweari.streamlit.app
 
 ---
 
