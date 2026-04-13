@@ -1,8 +1,5 @@
-"""Data preprocessing pipeline for the Online Retail II dataset.
+# Data preprocessing pipeline for the Online Retail II dataset.
 
-This module standardizes raw transactional data and prepares a cleaned dataset
-used by downstream EDA, clustering, regression, and classification modules.
-"""
 
 from __future__ import annotations
 
