@@ -25,18 +25,20 @@
     "threshold_days": 90,
     "metrics": {
       "LogisticRegression": {
-        "Accuracy": 0.9897959183673469,
-        "Precision": 1.0,
-        "Recall": 0.979933110367893,
-        "F1": 0.9898648648648649,
-        "ROC_AUC": 1.0
+        "Accuracy": 0.7313150425733207,
+        "Precision": 0.7350299401197605,
+        "Recall": 0.8210702341137124,
+        "F1": 0.7756714060031595,
+        "ROC_AUC": 0.7949519458470865,
+        "BrierScore": 0.18539083404325185
       },
       "RandomForestClassifier": {
-        "Accuracy": 1.0,
-        "Precision": 1.0,
-        "Recall": 1.0,
-        "F1": 1.0,
-        "ROC_AUC": 0.9999999999999999
+        "Accuracy": 0.7086092715231788,
+        "Precision": 0.7265625,
+        "Recall": 0.7775919732441472,
+        "F1": 0.7512116316639742,
+        "ROC_AUC": 0.7624580118186257,
+        "BrierScore": 0.19944586092715233
       }
     }
   }

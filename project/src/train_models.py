@@ -19,6 +19,7 @@ from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.metrics import (
     accuracy_score,
+    brier_score_loss,
     f1_score,
     mean_squared_error,
     precision_score,
@@ -158,7 +159,8 @@ def _train_clv_model(clv_df: pd.DataFrame) -> Tuple[Pipeline, Dict[str, Dict[str
 
 
 def _train_churn_model(churn_df: pd.DataFrame) -> Tuple[Pipeline, Dict[str, Dict[str, float]], pd.DataFrame]:
-    feature_cols = ["Recency", "Frequency", "Monetary", "PredictedCLV", "ClusterLabel"]
+    # Avoid direct label leakage: ChurnLabel is derived from Recency threshold.
+    feature_cols = ["Frequency", "Monetary", "PredictedCLV", "ClusterLabel"]
     target_col = "ChurnLabel"
 
     X = churn_df[feature_cols].copy()
@@ -168,7 +170,7 @@ def _train_churn_model(churn_df: pd.DataFrame) -> Tuple[Pipeline, Dict[str, Dict
         X, y, test_size=0.2, random_state=RANDOM_STATE, stratify=y
     )
 
-    numeric_features = ["Recency", "Frequency", "Monetary", "PredictedCLV"]
+    numeric_features = ["Frequency", "Monetary", "PredictedCLV"]
     categorical_features = ["ClusterLabel"]
 
     preprocessor = ColumnTransformer(
@@ -230,10 +232,11 @@ def _train_churn_model(churn_df: pd.DataFrame) -> Tuple[Pipeline, Dict[str, Dict
             "Recall": float(recall_score(y_test, pred, zero_division=0)),
             "F1": float(f1_score(y_test, pred, zero_division=0)),
             "ROC_AUC": float(roc_auc_score(y_test, proba)),
+            "BrierScore": float(brier_score_loss(y_test, proba)),
         }
         fitted_models[model_name] = pipe
 
-    best_name = max(metrics, key=lambda name: metrics[name]["ROC_AUC"])
+    best_name = min(metrics, key=lambda name: (metrics[name]["BrierScore"], -metrics[name]["ROC_AUC"]))
     best_model = fitted_models[best_name]
 
     return best_model, metrics, X
@@ -325,13 +328,12 @@ def train_all_models(processed_csv: Path, models_dir: Path, horizon_days: int, c
     churn_df, used_threshold = build_churn_dataset(
         transactions=transactions,
         clv_predictions=clv_pred_df,
-        cluster_labels=rfm_segments[["CustomerID", "ClusterLabel"]],
         threshold_days=churn_days,
         dynamic_threshold=False,
     )
 
     churn_model, churn_metrics, churn_X = _train_churn_model(churn_df)
-    churn_feature_cols = ["Recency", "Frequency", "Monetary", "PredictedCLV", "ClusterLabel"]
+    churn_feature_cols = ["Frequency", "Monetary", "PredictedCLV", "ClusterLabel"]
     churn_shap = explain_churn_prediction(
         model=churn_model,
         X_sample=churn_df[churn_feature_cols].sample(min(2000, len(churn_df)), random_state=RANDOM_STATE),
