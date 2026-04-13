@@ -134,7 +134,6 @@ def predict_customer(customer_id: int, processed_csv: Path, models_dir: Path) ->
     churn_model = artifacts["churn"]["model"]
     churn_input = pd.DataFrame([
         {
-            "Recency": row["Recency"],
             "Frequency": row["Frequency"],
             "Monetary": row["Monetary"],
             "PredictedCLV": clv_prediction,

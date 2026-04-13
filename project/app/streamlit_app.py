@@ -109,7 +109,7 @@ def _render_prediction_cards(result: Dict) -> None:
     """Render compact metric cards for key prediction outputs."""
     c1, c2, c3 = st.columns(3)
     c1.metric("CLV", f"{result['PredictedCLV']:.2f}")
-    c2.metric("Churn Probability", f"{result['ChurnProbability']:.4f}")
+    c2.metric("Churn Probability", f"{result['ChurnProbability'] * 100:.2f}%")
     c3.metric("Customer Segment", result["ClusterLabel"])
 
 
@@ -139,19 +139,20 @@ def _render_shap_panel(result: Dict, prediction_key: str) -> None:
 
 def _render_churn_gauge(churn_probability: float) -> None:
     """Render optional churn gauge visualization."""
+    churn_probability_pct = churn_probability * 100.0
     gauge = go.Figure(
         go.Indicator(
             mode="gauge+number",
-            value=churn_probability,
-            number={"valueformat": ".2f"},
+            value=churn_probability_pct,
+            number={"suffix": "%", "valueformat": ".2f"},
             title={"text": "Churn Risk"},
             gauge={
-                "axis": {"range": [0, 1]},
+                "axis": {"range": [0, 100]},
                 "bar": {"color": "#d62728"},
                 "steps": [
-                    {"range": [0.0, 0.4], "color": "#c7e9c0"},
-                    {"range": [0.4, 0.7], "color": "#fdd49e"},
-                    {"range": [0.7, 1.0], "color": "#fcae91"},
+                    {"range": [0.0, 40.0], "color": "#c7e9c0"},
+                    {"range": [40.0, 70.0], "color": "#fdd49e"},
+                    {"range": [70.0, 100.0], "color": "#fcae91"},
                 ],
             },
         )
@@ -179,7 +180,7 @@ def overview_page(df: pd.DataFrame, predictions: pd.DataFrame) -> None:
 
     if not predictions.empty:
         churn_risk = (predictions["ChurnProbability"] > 0.7).mean() * 100
-        st.info(f"Customers with high churn risk (>0.7): {churn_risk:.2f}%")
+        st.info(f"Customers with high churn risk (>70%): {churn_risk:.2f}%")
 
 
 def segmentation_page(segments: pd.DataFrame) -> None:

@@ -212,29 +212,45 @@ def build_clv_dataset(transactions: pd.DataFrame, horizon_days: int = 90) -> pd.
 def build_churn_dataset(
     transactions: pd.DataFrame,
     clv_predictions: pd.DataFrame,
-    cluster_labels: pd.DataFrame,
+    cluster_labels: pd.DataFrame | None = None,
     threshold_days: int = 90,
     dynamic_threshold: bool = False,
 ) -> Tuple[pd.DataFrame, int]:
-    """Create churn classification dataset and label.
+    """Create churn classification dataset using a temporal future-window label.
 
-    churn = 1 if Recency > threshold.
-    If dynamic_threshold is True, threshold is set to 75th percentile recency.
+    ChurnLabel = 1 when a customer has no purchases in the next `threshold_days`
+    after the cutoff date. Features are built only from history up to cutoff.
     """
-    base = build_customer_aggregates(transactions)
+    work = transactions.copy()
+    work["InvoiceDate"] = pd.to_datetime(work["InvoiceDate"], errors="coerce")
 
-    threshold = threshold_days
-    if dynamic_threshold:
-        threshold = int(np.percentile(base["Recency"], 75))
+    max_date = work["InvoiceDate"].max()
+    cutoff_date = max_date - pd.Timedelta(days=threshold_days)
+
+    history = work[work["InvoiceDate"] <= cutoff_date].copy()
+    future = work[(work["InvoiceDate"] > cutoff_date) & (work["InvoiceDate"] <= max_date)].copy()
+
+    base = build_customer_aggregates(history)
+
+    if cluster_labels is None:
+        history_segments, _ = run_rfm_clustering(history)
+        cluster_labels = history_segments[["CustomerID", "ClusterLabel"]].copy()
+
+    active_in_future = future.groupby("CustomerID", as_index=False).size()[["CustomerID"]]
+    active_in_future["HasFuturePurchase"] = 1
 
     data = base.merge(clv_predictions[["CustomerID", "PredictedCLV"]], on="CustomerID", how="left")
     data = data.merge(cluster_labels[["CustomerID", "ClusterLabel"]], on="CustomerID", how="left")
+    data = data.merge(active_in_future, on="CustomerID", how="left")
 
     data["PredictedCLV"] = data["PredictedCLV"].fillna(data["PredictedCLV"].median())
     data["ClusterLabel"] = data["ClusterLabel"].fillna("Regular Customers")
-    data["ChurnLabel"] = (data["Recency"] > threshold).astype(int)
+    data["HasFuturePurchase"] = data["HasFuturePurchase"].fillna(0).astype(int)
+    data["ChurnLabel"] = 1 - data["HasFuturePurchase"]
+    data = data.drop(columns=["HasFuturePurchase"])
 
-    return data, threshold
+    # Preserve return contract: second element is the churn horizon in days.
+    return data, threshold_days
 
 
 def make_recommendation_actions(cluster_label: str, predicted_clv: float, churn_probability: float, clv_high_threshold: float) -> List[str]:

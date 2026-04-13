@@ -1,8 +1,7 @@
 Feature,Importance
-num__Recency,12.693709970613265
-num__Monetary,0.30935907471040675
-num__PredictedCLV,0.25300196182851653
-cat__ClusterLabel_At Risk,0.1842183181990228
-cat__ClusterLabel_Loyal Customers,0.08008250100817481
-num__Frequency,0.061285603948861934
-cat__ClusterLabel_Champions,6.447503969828483e-06
+num__Frequency,0.6589920758129334
+cat__ClusterLabel_Loyal Customers,0.45571362320819203
+num__PredictedCLV,0.30908781601909147
+num__Monetary,0.2941269715044126
+cat__ClusterLabel_At Risk,0.08539373124954877
+cat__ClusterLabel_Champions,0.00409768403975668
