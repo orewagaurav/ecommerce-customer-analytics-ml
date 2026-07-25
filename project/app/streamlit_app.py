@@ -19,6 +19,12 @@ from src.analytics_store import AnalyticsAggregates
 from src.config import get_settings
 from src.feature_store import FeatureStore
 from app.api_client import AnalyticsApiClient, ApiError, CustomerNotFound
+from app.pages_extra import (
+    customer_360_page,
+    executive_page,
+    history_page,
+    what_if_page,
+)
 
 SETTINGS = get_settings()
 API = AnalyticsApiClient(
@@ -85,6 +91,12 @@ def load_customer_ids() -> list[int]:
     return sorted(FEATURES.customer_ids())
 
 
+@st.cache_data(show_spinner=False)
+def load_feature_frame() -> pd.DataFrame:
+    """Full feature table, for the executive top-customers view."""
+    return FEATURES.frame()
+
+
 def safe_predict(customer_id: int) -> Dict | None:
     """Call the API, surfacing failures as dashboard messages rather than traces."""
     try:
@@ -123,11 +135,15 @@ def load_training_report() -> Dict:
 def show_sidebar() -> str:
     st.sidebar.title("E-Commerce Analytics")
     pages = [
+        "Executive Dashboard",
         "Overview",
+        "Customer 360",
         "Segmentation",
         "CLV Prediction",
         "Churn Prediction",
         "Recommendations",
+        "What-if Simulator",
+        "Prediction History",
     ]
     selection = st.sidebar.radio("Select Page", pages)
 
@@ -355,7 +371,15 @@ def main() -> None:
     predictions = load_customer_predictions()
     segments = load_segments()
 
-    if page == "Overview":
+    if page == "Executive Dashboard":
+        executive_page(AGGREGATES, predictions, load_feature_frame())
+    elif page == "Customer 360":
+        customer_360_page(AGGREGATES, load_customer_ids, safe_predict, API)
+    elif page == "What-if Simulator":
+        what_if_page(load_customer_ids, API)
+    elif page == "Prediction History":
+        history_page(API)
+    elif page == "Overview":
         overview_page(predictions)
     elif page == "Segmentation":
         segmentation_page(segments)

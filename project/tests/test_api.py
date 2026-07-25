@@ -195,3 +195,103 @@ def test_lifetime_predictions_reflect_persisted_history(client, known_customer_i
 
     assert lifetime["predictions"] > 0
     assert lifetime["unique_customers"] >= 1
+
+
+# --- simulate ---------------------------------------------------------------
+
+def test_simulate_returns_baseline_and_simulated(client, known_customer_id):
+    response = client.post(
+        f"/v1/simulate/{known_customer_id}", json={"overrides": {"Frequency": 50.0}}
+    )
+    assert response.status_code == 200
+
+    body = response.json()
+    assert body["baseline"]["cluster_label"]
+    assert body["simulated"]["cluster_label"]
+    assert body["applied_overrides"] == {"Frequency": 50.0}
+
+
+def test_simulate_changes_the_prediction(client, known_customer_id):
+    """A large behavioural override must actually move the model output."""
+    body = client.post(
+        f"/v1/simulate/{known_customer_id}",
+        json={"overrides": {"Frequency": 200.0, "Monetary": 250000.0, "Recency": 1.0}},
+    ).json()
+
+    moved = (
+        abs(body["clv_delta"]) > 0
+        or abs(body["churn_delta"]) > 0
+        or body["segment_changed"]
+    )
+    assert moved, "overriding every RFM dimension left the prediction unchanged"
+
+
+def test_simulate_rejects_unknown_feature(client, known_customer_id):
+    response = client.post(
+        f"/v1/simulate/{known_customer_id}", json={"overrides": {"NotAFeature": 1.0}}
+    )
+    assert response.status_code == 422
+
+
+def test_simulate_unknown_customer_returns_404(client):
+    response = client.post("/v1/simulate/99999999", json={"overrides": {"Frequency": 5.0}})
+    assert response.status_code == 404
+
+
+def test_simulate_does_not_write_to_history(client, known_customer_id):
+    """A hypothetical is not a prediction the system made, so it must not be logged."""
+    before = client.get("/v1/metrics").json()["lifetime"]["predictions"]
+    client.post(f"/v1/simulate/{known_customer_id}", json={"overrides": {"Frequency": 9.0}})
+    after = client.get("/v1/metrics").json()["lifetime"]["predictions"]
+
+    assert after == before
+
+
+# --- history ----------------------------------------------------------------
+
+def test_history_returns_recorded_predictions(client, known_customer_id):
+    client.post(f"/v1/predict/{known_customer_id}")
+    body = client.get("/v1/history").json()
+
+    assert body["total"] > 0
+    assert body["entries"][0]["customer_id"] is not None
+
+
+def test_history_filters_by_customer(client, known_customer_id):
+    client.post(f"/v1/predict/{known_customer_id}")
+    body = client.get(f"/v1/history?customer_id={known_customer_id}").json()
+
+    assert all(entry["customer_id"] == known_customer_id for entry in body["entries"])
+
+
+def test_history_filters_by_churn_probability(client, known_customer_id):
+    client.post(f"/v1/predict/{known_customer_id}")
+    body = client.get("/v1/history?min_churn_probability=0.99").json()
+
+    assert all(entry["churn_probability"] >= 0.99 for entry in body["entries"])
+
+
+def test_history_respects_limit(client, known_customer_id):
+    for _ in range(3):
+        client.post(f"/v1/predict/{known_customer_id}")
+    body = client.get("/v1/history?limit=2").json()
+
+    assert body["returned"] <= 2
+
+
+def test_history_rejects_invalid_limit(client):
+    assert client.get("/v1/history?limit=0").status_code == 422
+
+
+# --- customer profile -------------------------------------------------------
+
+def test_customer_profile_returns_features(client, known_customer_id):
+    body = client.get(f"/v1/customers/{known_customer_id}/profile").json()
+
+    assert body["customer_id"] == known_customer_id
+    for feature in ("Recency", "Frequency", "Monetary", "Tenure"):
+        assert feature in body["features"]
+
+
+def test_customer_profile_unknown_customer_returns_404(client):
+    assert client.get("/v1/customers/99999999/profile").status_code == 404

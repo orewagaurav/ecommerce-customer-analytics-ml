@@ -143,3 +143,69 @@ class ErrorResponse(BaseModel):
     detail: str
     request_id: str | None = None
     context: dict[str, Any] | None = None
+
+
+class SimulationRequest(BaseModel):
+    """Feature overrides for a what-if scenario."""
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    overrides: dict[str, float] = Field(
+        description="Feature name to value, e.g. {\"Frequency\": 12, \"Recency\": 30}.",
+        examples=[{"Recency": 15.0, "Frequency": 20.0, "Monetary": 8000.0}],
+    )
+
+
+class SimulationOutcome(BaseModel):
+    """One side of a what-if comparison."""
+
+    cluster_label: str
+    predicted_clv: float
+    churn_probability: float
+    recommended_action: str
+    priority_level: str
+
+
+class SimulationResponse(BaseModel):
+    """Baseline versus simulated, plus the deltas between them."""
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    customer_id: int
+    applied_overrides: dict[str, float]
+    baseline: SimulationOutcome
+    simulated: SimulationOutcome
+    clv_delta: float
+    churn_delta: float
+    segment_changed: bool
+    model_version: str
+
+
+class HistoryEntry(BaseModel):
+    """One recorded prediction."""
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    timestamp: str
+    customer_id: int
+    predicted_clv: float
+    churn_probability: float
+    cluster_label: str
+    recommended_action: str
+    model_version: str
+    latency_ms: float
+
+
+class HistoryResponse(BaseModel):
+    """Filtered slice of the prediction audit log."""
+
+    total: int
+    returned: int
+    entries: list[HistoryEntry]
+
+
+class CustomerProfileResponse(BaseModel):
+    """Stored feature values for one customer."""
+
+    customer_id: int
+    features: dict[str, Any]
