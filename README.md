@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/orewagaurav/ecommerce-customer-analytics-ml/actions/workflows/ci.yml/badge.svg)](https://github.com/orewagaurav/ecommerce-customer-analytics-ml/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue)
-![Tests](https://img.shields.io/badge/tests-93%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-123%20passing-brightgreen)
 
 A production-style customer intelligence system built on the **Online Retail II**
 dataset (1M+ transactions). It segments customers, forecasts 90-day value,
@@ -325,7 +325,7 @@ job, a CRM integration — gets the same artefact from the same endpoint.
 ## Testing
 
 ```bash
-pytest                 # 93 tests
+pytest                 # 123 tests
 pytest --cov=src       # with coverage
 ```
 

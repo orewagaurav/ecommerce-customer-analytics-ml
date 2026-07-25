@@ -43,8 +43,14 @@ htmlcov/
 # Notebook checkpoints
 .ipynb_checkpoints/
 
-# Browser-automation artifacts from UI verification runs
+# Browser-automation artifacts from UI verification runs. Playwright defaults to
+# .playwright-mcp/, but an explicit filename lands wherever it was asked to -
+# a screenshot was committed to the repo root this way once. Intentional images
+# belong in docs/, which is not ignored.
 .playwright-mcp/
+/*.png
+/*.jpg
+/*.jpeg
 
 # ---------------------------------------------------------------- editors
 # .vscode/settings.json is committed on purpose (shared interpreter and
