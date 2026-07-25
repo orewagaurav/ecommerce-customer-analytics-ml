@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install OpenMP runtime
+        # XGBoost links against libgomp; without it the import fails and the
+        # training code silently falls back to non-XGBoost candidates.
+        run: sudo apt-get update && sudo apt-get install -y libgomp1
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Verify XGBoost is importable
+        # Guards the failure mode where a swallowed ImportError meant no
+        # XGBoost run ever reached the training report.
+        run: python -c "import xgboost; print('xgboost', xgboost.__version__)"
+
+      - name: Lint
+        run: ruff check project/ --select E9,F63,F7,F82
+
+      - name: Run tests
+        run: pytest --cov=src --cov-report=term-missing
