@@ -1,44 +1,49 @@
 Feature,Importance
-num__Recency,1.0082666994342366
-num__Monetary,0.6151238118566548
-num__PurchaseFrequency,0.3314872995486152
-num__AverageBasketSize,0.2400290445900939
-num__Frequency,0.15178631462489123
-cat__Country_Germany,0.02446410458393913
-cat__Country_Belgium,0.016688617617700085
-cat__Country_Denmark,0.016334870676317868
-cat__Country_Spain,0.014565386845373991
-cat__Country_Channel Islands,0.012043161548503056
-cat__Country_Switzerland,0.007873276478822324
-cat__Country_United Kingdom,0.007053165553829096
-cat__Country_France,0.005522302919953653
-cat__Country_Norway,0.0027494083410559687
-cat__Country_Poland,0.00273543653502129
-cat__Country_Sweden,0.002079401592417267
-cat__Country_Italy,0.0017458156054848222
-cat__Country_Greece,0.0016184059144533239
-cat__Country_European Community,0.0012679390191845596
-cat__Country_Canada,0.0011305888396408409
-cat__Country_Israel,0.0010908909731730818
-cat__Country_Japan,0.0010278918441943823
-cat__Country_Netherlands,0.0008931057458612486
-cat__Country_Australia,0.000678016514298506
-cat__Country_Austria,0.0006686431833612732
-cat__Country_Unspecified,0.0006565770122339017
-cat__Country_Portugal,0.00036227762596565294
-cat__Country_United Arab Emirates,8.5492198234424e-05
-cat__Country_Cyprus,7.182085810229182e-05
-cat__Country_Lebanon,0.0
-cat__Country_Czech Republic,0.0
+num__Recency,0.7051314015202138
+num__Monetary,0.501565023625587
+num__AvgInterPurchaseDays,0.20438448692062844
+num__DistinctProducts,0.2032060682860935
+num__Frequency,0.1252775327477906
+num__RecentRevenueShare,0.12498342619025044
+num__Tenure,0.11153399889972707
+num__AvgItemsPerInvoice,0.10368050453409378
+num__AverageBasketSize,0.09371177424594858
+num__PurchaseFrequency,0.0912833345715964
+cat__Country_Spain,0.001681322364702861
+cat__Country_Germany,0.0016445936109943287
+cat__Country_United Kingdom,0.0014652250709378011
+cat__Country_France,0.0003319641552051594
+cat__Country_Belgium,0.0002929030786203326
+cat__Country_Cyprus,0.00019989388953480295
+cat__Country_Netherlands,0.0
+cat__Country_Nigeria,0.0
+cat__Country_Norway,0.0
+cat__Country_Poland,0.0
+cat__Country_Portugal,0.0
+cat__Country_Saudi Arabia,0.0
 cat__Country_Bahrain,0.0
-cat__Country_USA,0.0
-cat__Country_Thailand,0.0
-cat__Country_Brazil,0.0
 cat__Country_Singapore,0.0
 cat__Country_Malta,0.0
-cat__Country_Saudi Arabia,0.0
-cat__Country_EIRE,0.0
-cat__Country_Finland,0.0
-cat__Country_Nigeria,0.0
+cat__Country_Sweden,0.0
+cat__Country_Switzerland,0.0
+cat__Country_Thailand,0.0
+cat__Country_USA,0.0
+cat__Country_United Arab Emirates,0.0
+cat__Country_Australia,0.0
 cat__Country_Korea,0.0
+cat__Country_Lebanon,0.0
+cat__Country_Japan,0.0
+cat__Country_Italy,0.0
+cat__Country_Israel,0.0
 cat__Country_Iceland,0.0
+cat__Country_Greece,0.0
+cat__Country_Austria,0.0
+cat__Country_Finland,0.0
+cat__Country_European Community,0.0
+cat__Country_EIRE,0.0
+cat__Country_Denmark,0.0
+cat__Country_Czech Republic,0.0
+cat__Country_Channel Islands,0.0
+cat__Country_Canada,0.0
+cat__Country_Brazil,0.0
+cat__Country_Unspecified,0.0
