@@ -129,11 +129,14 @@ def predict_customer(customer_id: int, processed_csv: Path, models_dir: Path) ->
         }
     ])
     clv_prediction = float(clv_model.predict(clv_input)[0])
-    clv_shap = explain_clv_prediction(clv_model, clv_input, top_n=3)
+    clv_shap = explain_clv_prediction(
+        clv_model, clv_input, top_n=3, background=artifacts["clv"].get("background_sample")
+    )
 
     churn_model = artifacts["churn"]["model"]
     churn_input = pd.DataFrame([
         {
+            "Recency": row["Recency"],
             "Frequency": row["Frequency"],
             "Monetary": row["Monetary"],
             "PredictedCLV": clv_prediction,
@@ -141,7 +144,9 @@ def predict_customer(customer_id: int, processed_csv: Path, models_dir: Path) ->
         }
     ])
     churn_probability = float(churn_model.predict_proba(churn_input)[:, 1][0])
-    churn_shap = explain_churn_prediction(churn_model, churn_input, top_n=3)
+    churn_shap = explain_churn_prediction(
+        churn_model, churn_input, top_n=3, background=artifacts["churn"].get("background_sample")
+    )
 
     clv_high_threshold = float(artifacts["clv"].get("high_clv_threshold", 0.0))
     actions = make_recommendation_actions(
