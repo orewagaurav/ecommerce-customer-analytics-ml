@@ -1,0 +1,67 @@
+# Two services from one image: the FastAPI scoring service and the Streamlit
+# dashboard that consumes it. The dashboard holds no model code - it reaches the
+# API over HTTP, which is what makes the split real rather than cosmetic.
+#
+#   docker compose up --build
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ecommerce-analytics:latest
+    container_name: analytics-api
+    command: >
+      uvicorn src.api.main:app
+      --host 0.0.0.0 --port 8000
+      --app-dir project
+      --workers 1
+    environment:
+      ENVIRONMENT: docker
+      LOG_LEVEL: INFO
+      LOG_FORMAT: json
+      MODEL_PATH: /app/project/models
+      DATA_PATH: /app/project/data/processed_online_retail_II.csv
+      FEATURE_STORE_PATH: /app/project/feature_store/features.parquet
+      REGISTRY_PATH: /app/project/models/model_registry.json
+      HISTORY_PATH: /app/project/prediction_history/history.parquet
+    ports:
+      - "8000:8000"
+    volumes:
+      # Persist the audit log across container restarts.
+      - prediction-history:/app/project/prediction_history
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ecommerce-analytics:latest
+    container_name: analytics-dashboard
+    command: >
+      streamlit run project/app/streamlit_app.py
+      --server.port 8501
+      --server.address 0.0.0.0
+      --server.headless true
+    environment:
+      ENVIRONMENT: docker
+      LOG_LEVEL: INFO
+      # Service name resolves over the compose network.
+      API_BASE_URL: http://api:8000
+      MODEL_PATH: /app/project/models
+      FEATURE_STORE_PATH: /app/project/feature_store/features.parquet
+    ports:
+      - "8501:8501"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  prediction-history:

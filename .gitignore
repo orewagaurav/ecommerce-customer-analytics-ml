@@ -5,3 +5,7 @@ __pycache__/
 *.pyc
 .venv/
 .DS_Store
+
+# Build outputs
+project/prediction_history/
+project/benchmarks/results.json

@@ -10,3 +10,8 @@ streamlit==1.55.0
 plotly==6.0.1
 jupyter==1.1.1
 watchdog==6.0.0
+fastapi==0.121.2
+uvicorn[standard]==0.41.0
+pydantic-settings==2.13.1
+httpx==0.28.1
+pyarrow==22.0.0

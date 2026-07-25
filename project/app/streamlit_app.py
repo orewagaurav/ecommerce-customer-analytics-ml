@@ -2,42 +2,10 @@
 
 from __future__ import annotations
 
-import importlib.util
 from pathlib import Path
-import subprocess
 import sys
 from typing import Dict
 
-
-def _ensure_runtime_dependencies() -> None:
-    """Install missing runtime packages when Streamlit Cloud skips requirements resolution."""
-    required_modules = {
-        "joblib": "joblib",
-        "plotly": "plotly",
-        "sklearn": "scikit-learn",
-        "xgboost": "xgboost",
-        "shap": "shap",
-    }
-    missing_packages = [
-        package_name
-        for module_name, package_name in required_modules.items()
-        if importlib.util.find_spec(module_name) is None
-    ]
-    if not missing_packages:
-        return
-
-    cmd = [sys.executable, "-m", "pip", "install", *missing_packages]
-    completed = subprocess.run(cmd, capture_output=True, text=True)
-    if completed.returncode != 0:
-        raise RuntimeError(
-            "Failed to install runtime dependencies: "
-            f"{' '.join(missing_packages)}\n{completed.stderr.strip()}"
-        )
-
-
-_ensure_runtime_dependencies()
-
-import joblib
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -45,22 +13,87 @@ import streamlit as st
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
-    sys.path.append(str(PROJECT_ROOT))
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.predict import predict_customer
+from src.analytics_store import AnalyticsAggregates
+from src.config import get_settings
+from src.feature_store import FeatureStore
+from app.api_client import AnalyticsApiClient, ApiError, CustomerNotFound
+
+SETTINGS = get_settings()
+API = AnalyticsApiClient(
+    base_url=SETTINGS.api_base_url,
+    api_version=SETTINGS.api_version,
+    timeout=SETTINGS.request_timeout_seconds,
+)
+
+
+def predict_customer(customer_id: int, *_ignored) -> Dict:
+    """Score a customer through the API and adapt to the dashboard's shape."""
+    payload = API.predict(int(customer_id))
+    return {
+        "CustomerID": payload["customer_id"],
+        "ClusterLabel": payload["cluster_label"],
+        "PredictedCLV": payload["predicted_clv"],
+        "ChurnProbability": payload["churn_probability"],
+        "Decision": {
+            "CustomerSegment": payload["decision"]["customer_segment"],
+            "PriorityLevel": payload["decision"]["priority_level"],
+            "RecommendedAction": payload["decision"]["recommended_action"],
+        },
+        "RecommendationActions": payload["recommendation_actions"],
+        "Explanations": payload["explanations"],
+        "ShapTopFeatures": {
+            task: [
+                {
+                    "Feature": item["feature"],
+                    "Contribution": item["contribution"],
+                    "AbsContribution": item["abs_contribution"],
+                    "Direction": item["direction"],
+                }
+                for item in rows
+            ]
+            for task, rows in payload["shap_top_features"].items()
+        },
+        "ModelVersion": payload["model_version"],
+        "LatencyMs": payload["latency_ms"],
+    }
 
 
 st.set_page_config(page_title="E-Commerce Customer Analytics", page_icon="📊", layout="wide")
 
-DATA_PATH = PROJECT_ROOT / "data" / "processed_online_retail_II.csv"
-MODELS_DIR = PROJECT_ROOT / "models"
+DATA_PATH = SETTINGS.data_path
+MODELS_DIR = SETTINGS.model_path
+
+AGGREGATES = AnalyticsAggregates(SETTINGS.analytics_store_path)
+FEATURES = FeatureStore(SETTINGS.feature_store_path)
 
 
 @st.cache_data(show_spinner=False)
-def load_data() -> pd.DataFrame:
-    df = pd.read_csv(DATA_PATH)
-    df["InvoiceDate"] = pd.to_datetime(df["InvoiceDate"], errors="coerce")
-    return df
+def load_monthly_revenue() -> pd.DataFrame:
+    """Precomputed monthly totals; the dashboard never reads raw transactions."""
+    return AGGREGATES.monthly_revenue()
+
+
+@st.cache_data(show_spinner=False)
+def load_kpis() -> Dict:
+    return AGGREGATES.kpis()
+
+
+@st.cache_data(show_spinner=False)
+def load_customer_ids() -> list[int]:
+    return sorted(FEATURES.customer_ids())
+
+
+def safe_predict(customer_id: int) -> Dict | None:
+    """Call the API, surfacing failures as dashboard messages rather than traces."""
+    try:
+        return predict_customer(int(customer_id))
+    except CustomerNotFound:
+        st.warning(f"Customer {customer_id} is not in the feature store.")
+    except ApiError as exc:
+        st.error(f"Scoring service unavailable: {exc}")
+    return None
 
 
 @st.cache_data(show_spinner=False)
@@ -96,7 +129,19 @@ def show_sidebar() -> str:
         "Churn Prediction",
         "Recommendations",
     ]
-    return st.sidebar.radio("Select Page", pages)
+    selection = st.sidebar.radio("Select Page", pages)
+
+    # Connection state is worth surfacing: every scoring page depends on it.
+    st.sidebar.divider()
+    if API.is_available():
+        info = API.model_info()
+        st.sidebar.success("API connected")
+        st.sidebar.caption(f"Model {info['production_version']}")
+    else:
+        st.sidebar.error("API unreachable")
+        st.sidebar.caption(f"Expected at {SETTINGS.api_base_url}")
+
+    return selection
 
 
 def show_not_trained_warning() -> None:
@@ -161,26 +206,26 @@ def _render_churn_gauge(churn_probability: float) -> None:
     st.plotly_chart(gauge, use_container_width=True)
 
 
-def overview_page(df: pd.DataFrame, predictions: pd.DataFrame) -> None:
+def overview_page(predictions: pd.DataFrame) -> None:
     st.title("Overview")
 
+    kpis = load_kpis()
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Total Revenue", f"{df['TotalAmount'].sum():,.2f}")
-    c2.metric("Unique Customers", f"{df['CustomerID'].nunique():,}")
-    c3.metric("Transactions", f"{len(df):,}")
-    c4.metric("Avg Basket", f"{(df['TotalAmount'].sum()/df['Invoice'].nunique()):,.2f}")
+    c1.metric("Total Revenue", f"{kpis['total_revenue']:,.2f}")
+    c2.metric("Unique Customers", f"{int(kpis['unique_customers']):,}")
+    c3.metric("Transactions", f"{int(kpis['total_transactions']):,}")
+    c4.metric("Avg Order Value", f"{kpis['avg_order_value']:,.2f}")
 
-    monthly = (
-        df.assign(InvoiceMonth=df["InvoiceDate"].dt.to_period("M").dt.to_timestamp())
-        .groupby("InvoiceMonth", as_index=False)["TotalAmount"]
-        .sum()
-    )
-    fig_rev = px.line(monthly, x="InvoiceMonth", y="TotalAmount", title="Monthly Revenue")
+    monthly = load_monthly_revenue()
+    fig_rev = px.line(monthly, x="InvoiceMonth", y="Revenue", title="Monthly Revenue")
     st.plotly_chart(fig_rev, use_container_width=True)
 
     if not predictions.empty:
-        churn_risk = (predictions["ChurnProbability"] > 0.7).mean() * 100
-        st.info(f"Customers with high churn risk (>70%): {churn_risk:.2f}%")
+        churn_risk = (predictions["ChurnProbability"] > SETTINGS.high_churn_threshold).mean() * 100
+        st.info(
+            f"Customers with high churn risk "
+            f"(>{SETTINGS.high_churn_threshold:.0%}): {churn_risk:.2f}%"
+        )
 
 
 def segmentation_page(segments: pd.DataFrame) -> None:
@@ -209,23 +254,19 @@ def segmentation_page(segments: pd.DataFrame) -> None:
     st.dataframe(segments.head(30), width="stretch")
 
 
-def clv_prediction_page(df: pd.DataFrame) -> None:
+def clv_prediction_page() -> None:
     st.title("CLV Prediction")
 
     if not (MODELS_DIR / "clv_model_artifacts.joblib").exists():
         show_not_trained_warning()
         return
 
-    customer_id = st.number_input(
-        "Enter Customer ID",
-        min_value=int(df["CustomerID"].min()),
-        max_value=int(df["CustomerID"].max()),
-        value=int(df["CustomerID"].iloc[0]),
-        step=1,
-    )
+    customer_id = st.selectbox("Select Customer ID", load_customer_ids())
 
     if st.button("Predict CLV", key="predict_clv"):
-        result = predict_customer(int(customer_id), DATA_PATH, MODELS_DIR)
+        result = safe_predict(int(customer_id))
+        if result is None:
+            return
         _render_prediction_cards(result)
 
         importance_path = MODELS_DIR / "clv_feature_importance.csv"
@@ -237,24 +278,21 @@ def clv_prediction_page(df: pd.DataFrame) -> None:
         _render_shap_panel(result, prediction_key="CLV")
 
 
-def churn_prediction_page(df: pd.DataFrame) -> None:
+def churn_prediction_page() -> None:
     st.title("Churn Prediction")
 
     if not (MODELS_DIR / "churn_model_artifacts.joblib").exists():
         show_not_trained_warning()
         return
 
-    customer_id = st.number_input(
-        "Enter Customer ID",
-        min_value=int(df["CustomerID"].min()),
-        max_value=int(df["CustomerID"].max()),
-        value=int(df["CustomerID"].iloc[0]),
-        step=1,
-        key="churn_customer_id",
+    customer_id = st.selectbox(
+        "Select Customer ID", load_customer_ids(), key="churn_customer_id"
     )
 
     if st.button("Predict Churn", key="predict_churn"):
-        result = predict_customer(int(customer_id), DATA_PATH, MODELS_DIR)
+        result = safe_predict(int(customer_id))
+        if result is None:
+            return
         _render_prediction_cards(result)
 
         c_left, c_right = st.columns([2, 1])
@@ -270,24 +308,21 @@ def churn_prediction_page(df: pd.DataFrame) -> None:
         _render_shap_panel(result, prediction_key="Churn")
 
 
-def recommendations_page(df: pd.DataFrame) -> None:
+def recommendations_page() -> None:
     st.title("Recommendations")
 
     if not (MODELS_DIR / "churn_model_artifacts.joblib").exists():
         show_not_trained_warning()
         return
 
-    customer_id = st.number_input(
-        "Enter Customer ID",
-        min_value=int(df["CustomerID"].min()),
-        max_value=int(df["CustomerID"].max()),
-        value=int(df["CustomerID"].iloc[0]),
-        step=1,
-        key="recommend_customer_id",
+    customer_id = st.selectbox(
+        "Select Customer ID", load_customer_ids(), key="recommend_customer_id"
     )
 
     if st.button("Generate Recommendation", key="recommend_action"):
-        result = predict_customer(int(customer_id), DATA_PATH, MODELS_DIR)
+        result = safe_predict(int(customer_id))
+        if result is None:
+            return
 
         _render_prediction_cards(result)
 
@@ -309,25 +344,27 @@ def recommendations_page(df: pd.DataFrame) -> None:
 
 
 def main() -> None:
-    if not DATA_PATH.exists():
-        st.error("Processed data not found. Run preprocessing first.")
+    if not AGGREGATES.exists():
+        st.error(
+            "Dashboard aggregates not found. Run: "
+            "`python project/src/build_feature_store.py`"
+        )
         return
 
     page = show_sidebar()
-    df = load_data()
     predictions = load_customer_predictions()
     segments = load_segments()
 
     if page == "Overview":
-        overview_page(df, predictions)
+        overview_page(predictions)
     elif page == "Segmentation":
         segmentation_page(segments)
     elif page == "CLV Prediction":
-        clv_prediction_page(df)
+        clv_prediction_page()
     elif page == "Churn Prediction":
-        churn_prediction_page(df)
+        churn_prediction_page()
     elif page == "Recommendations":
-        recommendations_page(df)
+        recommendations_page()
 
 
 if __name__ == "__main__":
