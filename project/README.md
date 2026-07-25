@@ -103,7 +103,7 @@ singleton and every layer is testable in isolation.
 ```text
 project/
 ├── app/
-│   ├── streamlit_app.py        # dashboard (HTTP client only, no model code)
+│   ├── streamlit_app.py        # dashboard: picks API or embedded backend
 │   └── api_client.py           # typed wrapper over the scoring API
 ├── src/
 │   ├── api/
@@ -437,17 +437,36 @@ store, so the 80 MB CSV never ships.
 
 ## 11. Deployment (Streamlit Cloud)
 
-1. Push repository to GitHub
-2. Go to Streamlit Community Cloud
-3. Create a new app and select:
-  - Repo: your repository
-  - Branch: main (or your default branch)
-  - App file: project/app/streamlit_app.py
-4. Add project/data/online_retail_II.csv to repo or configure remote data access
-5. Deploy
+Live: https://orewagaurav.streamlit.app
 
-Deployment link:
-- https://ecommerce-customer-analytics-ml-iw5v4ndz7tnjtf3zxweari.streamlit.app
+| Setting | Value |
+|---|---|
+| Branch | `main` |
+| Main file path | `project/app/streamlit_app.py` |
+
+No dataset upload is needed. The committed feature store (~1 MB of parquet) and
+compressed model artifacts are everything inference reads.
+
+**Two things this deployment depends on, both learned the hard way:**
+
+*One requirements file.* Streamlit Cloud resolves the `requirements.txt` nearest
+the main module, not the repository root. A stale `project/app/requirements.txt`
+predating the API work was picked up and the app died at import with
+`ModuleNotFoundError: No module named 'pydantic'`. There is now exactly one
+requirements file, at the root.
+
+*Embedded scoring.* Streamlit Community Cloud runs a single process and cannot
+host the FastAPI service alongside the dashboard. The dashboard probes for the
+API at startup and falls back to `app/local_backend.py`, which drives the same
+`PredictionService` in-process. The sidebar reports which mode is active. Under
+`docker compose` the API is reachable and is used instead.
+
+To point the dashboard at a separately hosted API, set `API_BASE_URL` in the
+Streamlit Cloud app secrets.
+
+Note: Streamlit Cloud currently ignores `runtime.txt` and provisions Python
+3.14, so the deployed environment differs from the pinned 3.11 in the Docker
+image. Both are exercised by CI.
 
 ---
 

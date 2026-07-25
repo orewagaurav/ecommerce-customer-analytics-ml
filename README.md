@@ -9,7 +9,7 @@ dataset (1M+ transactions). It segments customers, forecasts 90-day value,
 predicts churn, explains every prediction with SHAP, and recommends an action —
 served through a **FastAPI** service with a **Streamlit** dashboard on top.
 
-**[Live dashboard](https://ecommerce-customer-analytics-ml-iw5v4ndz7tnjtf3zxweari.streamlit.app)** ·
+**[Live dashboard](https://orewagaurav.streamlit.app)** ·
 [Full technical write-up](project/README.md)
 
 ---
@@ -351,7 +351,7 @@ CI runs lint, the feature-store build, and the full suite on Python 3.11 and 3.1
 ```text
 project/
 ├── app/
-│   ├── streamlit_app.py        # dashboard (HTTP client only, no model code)
+│   ├── streamlit_app.py        # dashboard: picks API or embedded backend
 │   └── api_client.py           # typed wrapper over the scoring API
 ├── src/
 │   ├── api/                    # FastAPI: routes, schemas, DI, error handlers
