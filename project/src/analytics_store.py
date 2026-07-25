@@ -24,6 +24,7 @@ MONTHLY_REVENUE = "monthly_revenue.parquet"
 COUNTRY_REVENUE = "country_revenue.parquet"
 TOP_PRODUCTS = "top_products.parquet"
 CUSTOMER_MONTHLY = "customer_monthly.parquet"
+CUSTOMER_PRODUCTS = "customer_products.parquet"
 KPIS = "kpis.parquet"
 
 
@@ -58,6 +59,12 @@ class AnalyticsAggregates:
         if customer_id is not None:
             frame = frame[frame["CustomerID"] == int(customer_id)]
         return frame
+
+    def customer_products(self, customer_id: int, limit: int = 10) -> pd.DataFrame:
+        """A customer's most-purchased products, by revenue."""
+        frame = self._read(CUSTOMER_PRODUCTS)
+        frame = frame[frame["CustomerID"] == int(customer_id)]
+        return frame.sort_values("Revenue", ascending=False).head(limit)
 
     def kpis(self) -> dict:
         return self._read(KPIS).iloc[0].to_dict()
@@ -116,6 +123,17 @@ def build_analytics_store(processed_csv: Path, output_dir: Path) -> AnalyticsAgg
         .sort_values(["CustomerID", "InvoiceMonth"])
     )
     customer_monthly.to_parquet(output_dir / CUSTOMER_MONTHLY, index=False)
+
+    # Per-customer product mix, capped at the top 15 per customer so the table
+    # stays small enough to load per page view.
+    customer_products = (
+        transactions.groupby(["CustomerID", "StockCode", "Description"], as_index=False)
+        .agg(Revenue=("TotalAmount", "sum"), Units=("Quantity", "sum"))
+        .sort_values(["CustomerID", "Revenue"], ascending=[True, False])
+        .groupby("CustomerID", as_index=False)
+        .head(15)
+    )
+    customer_products.to_parquet(output_dir / CUSTOMER_PRODUCTS, index=False)
 
     kpis = pd.DataFrame([{
         "total_revenue": float(transactions["TotalAmount"].sum()),

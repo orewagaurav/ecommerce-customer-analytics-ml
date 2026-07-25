@@ -294,37 +294,26 @@ Saved outputs:
 
 ## 7. Streamlit Dashboard
 
-Implemented in app/streamlit_app.py with 5 pages:
+Nine pages. The dashboard holds no model code: it reads precomputed aggregates
+and calls the API over HTTP.
 
-1. Overview Dashboard
-  - KPI cards for sales, customers, average order value
-  - Monthly trend
-  - High churn risk percentage and cluster mix
+| Page | Contents |
+|---|---|
+| Executive Dashboard | Revenue and customer KPIs, revenue trend, revenue by country, segment mix, churn distribution, top customers, recommended focus, revenue at risk |
+| Overview | Headline KPIs and monthly revenue |
+| Customer 360 | Profile, monthly spend and orders, top products, segment, CLV, churn, SHAP explanation, recommended action |
+| Segmentation | Cluster distribution and RFM scatter |
+| CLV Prediction | Per-customer CLV with SHAP panel |
+| Churn Prediction | Per-customer churn with risk gauge and SHAP panel |
+| Recommendations | Unified decision output |
+| What-if Simulator | Adjust Recency / Frequency / Monetary and rescore against a baseline |
+| Prediction History | Filterable audit log with CSV export |
 
-2. Customer Segmentation
-  - Cluster distribution
-  - RFM scatter views
+The sidebar shows API connection state and the deployed model version, so a
+broken backend is visible immediately rather than as a failed page.
 
-3. CLV Prediction
-  - Input customer ID
-  - Predicted CLV card
-  - Why this prediction? panel with SHAP top features
-
-4. Churn Prediction
-  - Input customer ID
-  - Churn probability card
-  - Churn risk gauge
-  - Why this prediction? panel with SHAP top features
-
-5. Recommendations
-  - Input customer ID
-  - Unified decision output:
-    - Cluster Label
-    - Predicted CLV
-    - Churn Probability
-    - Priority level
-    - Recommended action + channel
-  - Integrated explanation context from SHAP signals
+**What-if is read-only.** Simulations are hypotheticals, not predictions the
+system made, so they are never written to the audit log — a test pins this.
 
 ### 7.1 Output Contract
 

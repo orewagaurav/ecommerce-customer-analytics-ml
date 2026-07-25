@@ -8,7 +8,7 @@ async endpoints below only touch in-memory state. Declaring a CPU-bound handler
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Path, status
+from fastapi import APIRouter, HTTPException, Path, Query, status
 
 from src.api.dependencies import (
     FeatureStoreDep,
@@ -29,6 +29,12 @@ from src.api.schemas import (
     PredictionRequest,
     PredictionResponse,
     ProcessMetrics,
+    CustomerProfileResponse,
+    HistoryEntry,
+    HistoryResponse,
+    SimulationOutcome,
+    SimulationRequest,
+    SimulationResponse,
 )
 from src.logging_config import get_logger
 
@@ -179,3 +185,94 @@ async def list_customers(feature_store: FeatureStoreDep, limit: int = 100) -> di
     """Sample of scoreable customer IDs, so a client need not guess one."""
     ids = feature_store.customer_ids()
     return {"total": len(ids), "limit": limit, "customer_ids": ids[:limit]}
+
+
+@router.post(
+    "/simulate/{customer_id}",
+    response_model=SimulationResponse,
+    summary="What-if: rescore a customer with overridden features",
+    responses={
+        404: {"model": ErrorResponse, "description": "Customer not in the feature store"},
+        422: {"model": ErrorResponse, "description": "Unknown feature in overrides"},
+    },
+)
+def simulate_customer(
+    service: PredictionServiceDep,
+    payload: SimulationRequest,
+    customer_id: int = Path(..., ge=0),
+) -> SimulationResponse:
+    """Score a customer as-is and with overrides, returning both plus deltas.
+
+    Read-only: nothing is written to the feature store or the audit log, because
+    a hypothetical is not a prediction the system actually made.
+    """
+    try:
+        baseline, simulated = service.simulate(customer_id, payload.overrides)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    def _outcome(result) -> SimulationOutcome:
+        return SimulationOutcome(
+            cluster_label=result.cluster_label,
+            predicted_clv=result.predicted_clv,
+            churn_probability=result.churn_probability,
+            recommended_action=result.decision.get("RecommendedAction", ""),
+            priority_level=result.decision.get("PriorityLevel", ""),
+        )
+
+    logger.info(
+        "Simulation served",
+        extra={
+            "customer_id": customer_id,
+            "overrides": payload.overrides,
+            "clv_delta": round(simulated.predicted_clv - baseline.predicted_clv, 2),
+        },
+    )
+
+    return SimulationResponse(
+        customer_id=int(customer_id),
+        applied_overrides=payload.overrides,
+        baseline=_outcome(baseline),
+        simulated=_outcome(simulated),
+        clv_delta=round(simulated.predicted_clv - baseline.predicted_clv, 2),
+        churn_delta=round(simulated.churn_probability - baseline.churn_probability, 6),
+        segment_changed=baseline.cluster_label != simulated.cluster_label,
+        model_version=baseline.model_version,
+    )
+
+
+@router.get("/history", response_model=HistoryResponse, summary="Prediction audit log")
+async def prediction_history(
+    history: HistoryServiceDep,
+    limit: int = Query(default=100, ge=1, le=5000),
+    customer_id: int | None = Query(default=None, ge=0),
+    min_churn_probability: float | None = Query(default=None, ge=0.0, le=1.0),
+) -> HistoryResponse:
+    """Recorded predictions, most recent first, with optional filters."""
+    frame = history.read(
+        limit=limit,
+        customer_id=customer_id,
+        min_churn_probability=min_churn_probability,
+    )
+    unfiltered_total = len(history.read())
+
+    return HistoryResponse(
+        total=unfiltered_total,
+        returned=int(len(frame)),
+        entries=[HistoryEntry(**record) for record in frame.to_dict(orient="records")],
+    )
+
+
+@router.get(
+    "/customers/{customer_id}/profile",
+    response_model=CustomerProfileResponse,
+    summary="Stored features for one customer",
+    responses={404: {"model": ErrorResponse, "description": "Customer not found"}},
+)
+async def customer_profile(
+    service: PredictionServiceDep, customer_id: int = Path(..., ge=0)
+) -> CustomerProfileResponse:
+    """Feature values behind a prediction, for the Customer 360 view."""
+    return CustomerProfileResponse(
+        customer_id=int(customer_id), features=service.customer_profile(customer_id)
+    )

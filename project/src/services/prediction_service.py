@@ -242,6 +242,93 @@ class PredictionService:
         )
 
 
+    def simulate(
+        self, customer_id: int, overrides: dict[str, float]
+    ) -> tuple[PredictionResult, PredictionResult]:
+        """Score a customer twice: as they are, and with features overridden.
+
+        Answers "what would happen if this customer bought twice as often?"
+        without writing anything back. Overrides are applied to a copy of the
+        stored feature row, so the feature store is never mutated.
+
+        Returns:
+            (baseline, simulated) so a caller can render them side by side.
+
+        Raises:
+            ValueError: an override names a feature that does not exist.
+        """
+        row = self._feature_store.get_customer(customer_id)
+
+        unknown = [name for name in overrides if name not in row.index]
+        if unknown:
+            raise ValueError(
+                f"Cannot override unknown features: {unknown}. "
+                f"Available: {sorted(c for c in row.index if c != 'CustomerID')}"
+            )
+
+        baseline = self.predict(customer_id, include_explanations=False)
+
+        adjusted = row.copy()
+        for name, value in overrides.items():
+            adjusted[name] = value
+
+        simulated = self._score_row(adjusted, customer_id)
+        return baseline, simulated
+
+    def _score_row(self, row: pd.Series, customer_id: int) -> PredictionResult:
+        """Score an arbitrary feature row that need not exist in the store."""
+        started = time.perf_counter()
+        artifacts = self._load_artifacts()
+
+        cluster_label = self._cluster_for(row, artifacts.rfm)
+
+        clv_input = self._model_input(row, artifacts.clv["feature_columns"])
+        predicted_clv = float(artifacts.clv["model"].predict(clv_input)[0])
+
+        churn_input = self._model_input(
+            row,
+            artifacts.churn["feature_columns"],
+            extras={"PredictedCLV": predicted_clv, "ClusterLabel": cluster_label},
+        )
+        churn_probability = float(artifacts.churn["model"].predict_proba(churn_input)[:, 1][0])
+
+        clv_threshold = float(artifacts.clv.get("high_clv_threshold", 0.0))
+        actions = make_recommendation_actions(
+            cluster_label=cluster_label,
+            predicted_clv=predicted_clv,
+            churn_probability=churn_probability,
+            clv_high_threshold=clv_threshold,
+        )
+        decision = get_recommendation(
+            {
+                "PredictedCLV": predicted_clv,
+                "ChurnProbability": churn_probability,
+                "ClusterLabel": cluster_label,
+            }
+        )
+
+        return PredictionResult(
+            customer_id=int(customer_id),
+            cluster_label=cluster_label,
+            predicted_clv=predicted_clv,
+            churn_probability=churn_probability,
+            decision=decision,
+            recommendation_actions=actions,
+            explanations={"CLV": [], "Churn": []},
+            shap_top_features={"CLV": [], "Churn": []},
+            model_version=self.model_version,
+            latency_ms=round((time.perf_counter() - started) * 1000.0, 2),
+        )
+
+    def customer_profile(self, customer_id: int) -> dict[str, Any]:
+        """Raw stored features for a customer, for profile display."""
+        row = self._feature_store.get_customer(customer_id)
+        return {
+            key: (value.item() if hasattr(value, "item") else value)
+            for key, value in row.to_dict().items()
+        }
+
+
 def _format_shap(top_rows: list[dict[str, Any]]) -> list[str]:
     return [
         f"{row['Feature']} ({row['Direction']}, SHAP={row['Contribution']:.4f})"

@@ -83,6 +83,28 @@ class AnalyticsApiClient:
     def customer_ids(self, limit: int = 500) -> list[int]:
         return self._request("GET", f"/customers?limit={limit}")["customer_ids"]
 
+    def simulate(self, customer_id: int, overrides: dict[str, float]) -> dict:
+        """Rescore a customer with overridden features (read-only what-if)."""
+        return self._request(
+            "POST", f"/simulate/{int(customer_id)}", json={"overrides": overrides}
+        )
+
+    def history(
+        self,
+        limit: int = 100,
+        customer_id: int | None = None,
+        min_churn_probability: float | None = None,
+    ) -> dict:
+        params: dict[str, Any] = {"limit": limit}
+        if customer_id is not None:
+            params["customer_id"] = int(customer_id)
+        if min_churn_probability is not None:
+            params["min_churn_probability"] = min_churn_probability
+        return self._request("GET", "/history", params=params)
+
+    def customer_profile(self, customer_id: int) -> dict:
+        return self._request("GET", f"/customers/{int(customer_id)}/profile")
+
     def is_available(self) -> bool:
         """Non-raising probe used to render a connection banner."""
         try:

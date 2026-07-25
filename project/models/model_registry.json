@@ -1,10 +1,10 @@
 {
   "registry_version": "1.0",
-  "updated_at": "2026-07-25T07:56:01.553369+00:00",
+  "updated_at": "2026-07-25T10:16:25.518609+00:00",
   "models": [
     {
       "name": "clv_regressor",
-      "version": "v20260725.0756",
+      "version": "v20260725.1016",
       "algorithm": "RandomForestRegressor_log",
       "task": "clv",
       "trained_at": "2026-07-25T07:12:56.821751+00:00",
@@ -36,7 +36,7 @@
     },
     {
       "name": "churn_classifier",
-      "version": "v20260725.0756",
+      "version": "v20260725.1016",
       "algorithm": "RandomForestClassifier",
       "task": "churn",
       "trained_at": "2026-07-25T07:12:56.821751+00:00",
@@ -70,7 +70,7 @@
     },
     {
       "name": "rfm_segmenter",
-      "version": "v20260725.0756",
+      "version": "v20260725.1016",
       "algorithm": "KMeans",
       "task": "segmentation",
       "trained_at": "2026-07-25T07:12:56.821751+00:00",
