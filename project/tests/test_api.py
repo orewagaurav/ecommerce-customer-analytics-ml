@@ -164,24 +164,34 @@ def test_model_info_reports_feature_store_stats(client):
 # --- metrics ----------------------------------------------------------------
 
 def test_metrics_counts_requests_and_predictions(client, known_customer_id):
-    before = client.get("/v1/metrics").json()
+    before = client.get("/v1/metrics").json()["process"]
     client.post(f"/v1/predict/{known_customer_id}")
-    after = client.get("/v1/metrics").json()
+    after = client.get("/v1/metrics").json()["process"]
 
-    assert after["total_predictions"] == before["total_predictions"] + 1
-    assert after["total_requests"] > before["total_requests"]
+    assert after["predictions"] == before["predictions"] + 1
+    assert after["requests"] > before["requests"]
 
 
 def test_metrics_reports_uptime_and_model_version(client):
     body = client.get("/v1/metrics").json()
 
-    assert body["uptime_seconds"] >= 0
+    assert body["process"]["uptime_seconds"] >= 0
     assert body["model_version"].startswith("v")
 
 
 def test_metrics_latency_populated_after_predictions(client, known_customer_id):
     client.post(f"/v1/predict/{known_customer_id}")
-    body = client.get("/v1/metrics").json()
+    lifetime = client.get("/v1/metrics").json()["lifetime"]
 
-    assert body["avg_latency_ms"] is not None
-    assert body["avg_latency_ms"] > 0
+    assert lifetime["avg_latency_ms"] is not None
+    assert lifetime["avg_latency_ms"] > 0
+
+
+def test_lifetime_predictions_reflect_persisted_history(client, known_customer_id):
+    """Lifetime counters come from the audit log, so a restart cannot zero them
+    while latency aggregates computed from the same rows stay populated."""
+    client.post(f"/v1/predict/{known_customer_id}")
+    lifetime = client.get("/v1/metrics").json()["lifetime"]
+
+    assert lifetime["predictions"] > 0
+    assert lifetime["unique_customers"] >= 1

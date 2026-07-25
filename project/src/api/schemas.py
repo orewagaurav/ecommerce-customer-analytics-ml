@@ -102,19 +102,37 @@ class ModelInfoResponse(BaseModel):
     feature_store: FeatureStoreInfo | None = None
 
 
-class MetricsResponse(BaseModel):
-    """Operational counters, not model quality metrics."""
-
-    model_config = ConfigDict(protected_namespaces=())
+class ProcessMetrics(BaseModel):
+    """Counters scoped to the current process; these reset on restart."""
 
     uptime_seconds: float
-    total_requests: int
-    total_predictions: int
+    requests: int
+    predictions: int
     failed_requests: int
+
+
+class LifetimeMetrics(BaseModel):
+    """Aggregates over the persisted prediction history; survive restarts."""
+
+    predictions: int
     avg_latency_ms: float | None = None
     p95_latency_ms: float | None = None
     avg_churn_probability: float | None = None
     unique_customers: int | None = None
+
+
+class MetricsResponse(BaseModel):
+    """Operational metrics, not model quality metrics.
+
+    Process and lifetime counters are separated deliberately. Flattening them
+    produced a response reporting zero predictions next to a latency average
+    computed from a hundred of them.
+    """
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    process: ProcessMetrics
+    lifetime: LifetimeMetrics
     model_version: str
 
 
