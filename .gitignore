@@ -1,11 +1,73 @@
-.coverage
-htmlcov/
-.pytest_cache/
-__pycache__/
-*.pyc
-.venv/
-.DS_Store
+# ---------------------------------------------------------------- secrets
+# config.py loads settings from .env, so anything in it is credentials.
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
 
-# Build outputs
+# ------------------------------------------------------------------- data
+# The raw and processed CSVs are ~170 MB and fully derivable via
+# scripts/get_data.py. Inference reads project/feature_store/*.parquet, which
+# IS tracked, so nothing here is needed to run the service.
+project/data/
+
+# ------------------------------------------------------ generated at runtime
+# Prediction audit log written by the API.
 project/prediction_history/
+# Benchmark output; regenerate with project/benchmarks/benchmark.py.
 project/benchmarks/results.json
+
+# --------------------------------------------------------------- python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# ------------------------------------------------------------ tool caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+
+# Browser-automation artifacts from UI verification runs
+.playwright-mcp/
+
+# ---------------------------------------------------------------- editors
+# .vscode/settings.json is committed on purpose (shared interpreter and
+# analysis paths); only user-specific files are ignored.
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+*.swp
+*~
+
+# ------------------------------------------------------------------- os
+.DS_Store
+Thumbs.db
+
+# ------------------------------------------------------------- git backups
+# Bundles created before history rewrites.
+*.bundle
+
+# ---------------------------------------------------------------------------
+# Deliberately NOT ignored - these are required for the service to run from a
+# fresh clone, and are small because artifacts are stored compressed:
+#   project/models/*.joblib          trained pipelines (~17 MB total)
+#   project/models/*.csv             feature importance, segments, predictions
+#   project/models/*.json            training report, model registry
+#   project/feature_store/*.parquet  feature store + dashboard aggregates (~1 MB)
