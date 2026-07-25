@@ -20,6 +20,7 @@ from src.api.dependencies import (
 )
 from src.api.schemas import (
     ErrorResponse,
+    LifetimeMetrics,
     FeatureStoreInfo,
     HealthResponse,
     MetricsResponse,
@@ -27,6 +28,7 @@ from src.api.schemas import (
     ModelInfoResponse,
     PredictionRequest,
     PredictionResponse,
+    ProcessMetrics,
 )
 from src.logging_config import get_logger
 
@@ -146,18 +148,28 @@ async def model_info(registry: RegistryDep, feature_store: FeatureStoreDep) -> M
 async def service_metrics(
     metrics: MetricsDep, history: HistoryServiceDep, registry: RegistryDep
 ) -> MetricsResponse:
-    """Throughput, latency and error counters for the running process."""
+    """Throughput, latency and error counters.
+
+    Split into process-scoped counters and lifetime aggregates read back from
+    the persisted history, so a restart cannot make the response contradict
+    itself.
+    """
     summary = history.summary()
 
     return MetricsResponse(
-        uptime_seconds=metrics.uptime_seconds,
-        total_requests=metrics.total_requests,
-        total_predictions=metrics.total_predictions,
-        failed_requests=metrics.failed_requests,
-        avg_latency_ms=summary.get("avg_latency_ms"),
-        p95_latency_ms=summary.get("p95_latency_ms"),
-        avg_churn_probability=summary.get("avg_churn_probability"),
-        unique_customers=summary.get("unique_customers"),
+        process=ProcessMetrics(
+            uptime_seconds=metrics.uptime_seconds,
+            requests=metrics.total_requests,
+            predictions=metrics.total_predictions,
+            failed_requests=metrics.failed_requests,
+        ),
+        lifetime=LifetimeMetrics(
+            predictions=summary.get("total_predictions", 0),
+            avg_latency_ms=summary.get("avg_latency_ms"),
+            p95_latency_ms=summary.get("p95_latency_ms"),
+            avg_churn_probability=summary.get("avg_churn_probability"),
+            unique_customers=summary.get("unique_customers"),
+        ),
         model_version=registry.production_version(),
     )
 

@@ -414,6 +414,62 @@ Deployment link:
 
 ---
 
+## 11.5 Docker
+
+Both services run from one image: the FastAPI scoring service and the Streamlit
+dashboard that consumes it over HTTP.
+
+```bash
+docker compose up --build
+```
+
+| Service | URL |
+|---|---|
+| API docs (Swagger) | http://localhost:8000/docs |
+| Health | http://localhost:8000/v1/health |
+| Dashboard | http://localhost:8501 |
+
+The dashboard waits on the API healthcheck before starting, and prediction
+history is persisted to a named volume so the audit log survives restarts.
+
+**Verified on Docker 29.6.2 / Compose v5.3.1 (arm64):** image builds, both
+containers reach healthy, predictions serve end to end, XGBoost imports
+(`libgomp1` present), the container runs as non-root `appuser` (uid 1000), and
+history survives `docker compose restart`.
+
+The image deliberately excludes `project/data`. Inference reads the feature
+store, so the 80 MB CSV never ships.
+
+---
+
+## 11.6 Performance
+
+Measured with `python project/benchmarks/benchmark.py`, 60 runs per path.
+
+| Path | Mean | Median | p95 |
+|---|---|---|---|
+| Legacy (re-read CSV per call) | 1586.5 ms | 1574.4 ms | 1624.9 ms |
+| Feature store + SHAP | 426.6 ms | 421.0 ms | 482.7 ms |
+| Feature store, no SHAP | 57.8 ms | 57.9 ms | 60.5 ms |
+
+**3.7x faster end to end, or 27x with `include_explanations: false`.**
+
+| | Before | After |
+|---|---|---|
+| Inference data file | 79.9 MB CSV | 0.357 MB parquet |
+| Feature lookup | full re-aggregation of ~800k rows | O(1) dict lookup |
+
+Inside Docker on macOS, steady state is ~550 ms with SHAP and ~75 ms without —
+roughly 25% above native, which is Docker Desktop VM overhead. The first request
+after start is slower (~1 s) while caches warm.
+
+**Honest reading of these numbers.** The feature store removed data loading from
+the request path entirely; what remains is SHAP, which is now ~85% of a fully
+explained request. The 3.7x figure is the honest end-to-end number, and the 27x
+figure is what the same service does when a caller does not need explanations.
+
+---
+
 ## 12. Troubleshooting
 
 1. Dashboard opens but shows warning about missing artifacts
