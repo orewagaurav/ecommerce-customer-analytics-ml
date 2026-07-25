@@ -1,0 +1,26 @@
+// Entry points add `project/` to sys.path at runtime, which a static analyser
+// cannot follow. Declaring it here is what stops Pylance flagging every
+// `from src...` / `from app...` import as unresolved.
+{
+  "include": ["project", "scripts"],
+  "exclude": [
+    "**/__pycache__",
+    "**/.venv",
+    "project/notebooks",
+    "project/data",
+    "project/feature_store"
+  ],
+  "extraPaths": ["project"],
+  "venvPath": ".",
+  "venv": ".venv",
+  "pythonVersion": "3.11",
+
+  // Off, not "basic". Basic reports ~105 issues, all of which are pandas and
+  // numpy stub artifacts (SupportsIndex vs int, `DataFrame | Series` unions from
+  // .sample()/.agg()) rather than defects in this code. Nothing gates on type
+  // checking - CI runs ruff - so enabling it would only replace unresolved-import
+  // squiggles with false-positive ones. Import resolution below still works.
+  "typeCheckingMode": "off",
+  "reportMissingImports": "error",
+  "reportMissingTypeStubs": "none"
+}

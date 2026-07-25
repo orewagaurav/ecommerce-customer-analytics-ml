@@ -47,10 +47,11 @@ def download_raw(destination: Path) -> bool:
 
     destination.parent.mkdir(parents=True, exist_ok=True)
     print(f"Downloading {KAGGLE_DATASET} ...")
+    # check=False: a failed download is reported to the user below, not raised.
     completed = subprocess.run(
         ["kaggle", "datasets", "download", "-d", KAGGLE_DATASET,
          "-p", str(destination.parent), "--unzip"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, check=False,
     )
     if completed.returncode != 0:
         print(f"Kaggle download failed:\n{completed.stderr.strip()}")
