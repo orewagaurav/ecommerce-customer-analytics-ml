@@ -1,0 +1,19 @@
+.git
+.github
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.coverage
+htmlcov
+
+# The 80 MB raw and processed CSVs are not needed at inference time; the
+# container serves predictions from feature_store/features.parquet.
+project/data
+project/notebooks
+project/tests
+project/benchmarks
+
+*.md
+!project/README.md
+.env

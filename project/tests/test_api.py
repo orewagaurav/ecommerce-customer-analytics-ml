@@ -1,0 +1,187 @@
+"""API contract tests.
+
+Exercised through FastAPI's TestClient against a real container, so routing,
+dependency wiring, serialisation and exception handling are all covered. The
+app is built with `create_app`, which is why no module-level singleton needs
+patching.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+from src.api.main import create_app
+from src.config import Settings
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+MODELS_DIR = PROJECT_ROOT / "models"
+FEATURE_STORE = PROJECT_ROOT / "feature_store" / "features.parquet"
+
+pytestmark = pytest.mark.skipif(
+    not (FEATURE_STORE.exists() and (MODELS_DIR / "churn_model_artifacts.joblib").exists()),
+    reason="feature store or model artifacts not built",
+)
+
+
+@pytest.fixture(scope="module")
+def settings(tmp_path_factory) -> Settings:
+    """Point history at a temp dir so tests never touch the real audit log."""
+    tmp = tmp_path_factory.mktemp("api")
+    return Settings(
+        feature_store_path=FEATURE_STORE,
+        model_path=MODELS_DIR,
+        registry_path=MODELS_DIR / "model_registry.json",
+        history_path=tmp / "history.parquet",
+        log_format="console",
+        log_level="WARNING",
+    )
+
+
+@pytest.fixture(scope="module")
+def client(settings) -> TestClient:
+    with TestClient(create_app(settings)) as test_client:
+        yield test_client
+
+
+@pytest.fixture(scope="module")
+def known_customer_id(client) -> int:
+    return client.get("/v1/customers?limit=1").json()["customer_ids"][0]
+
+
+# --- health -----------------------------------------------------------------
+
+def test_health_reports_healthy_when_dependencies_are_present(client):
+    body = client.get("/v1/health").json()
+
+    assert body["status"] == "healthy"
+    assert body["models_loaded"] is True
+    assert body["feature_store_available"] is True
+
+
+def test_root_advertises_docs_and_health(client):
+    body = client.get("/").json()
+    assert body["docs"] == "/docs"
+
+
+def test_openapi_schema_is_served(client):
+    schema = client.get("/openapi.json").json()
+    assert "/v1/predict/{customer_id}" in schema["paths"]
+
+
+# --- predict ----------------------------------------------------------------
+
+def test_predict_returns_full_contract(client, known_customer_id):
+    response = client.post(f"/v1/predict/{known_customer_id}")
+    assert response.status_code == 200
+
+    body = response.json()
+    for key in (
+        "customer_id", "cluster_label", "predicted_clv", "churn_probability",
+        "decision", "recommendation_actions", "explanations", "shap_top_features",
+        "model_version", "latency_ms",
+    ):
+        assert key in body
+
+
+def test_predict_churn_probability_is_bounded(client, known_customer_id):
+    body = client.post(f"/v1/predict/{known_customer_id}").json()
+    assert 0.0 <= body["churn_probability"] <= 1.0
+
+
+def test_predict_returns_nonzero_shap(client, known_customer_id):
+    """Regression guard for the zero-background explainer bug, at API level."""
+    body = client.post(f"/v1/predict/{known_customer_id}").json()
+
+    for task in ("CLV", "Churn"):
+        contributions = [abs(f["contribution"]) for f in body["shap_top_features"][task]]
+        assert sum(contributions) > 0
+
+
+def test_predict_can_skip_explanations(client, known_customer_id):
+    body = client.post(
+        f"/v1/predict/{known_customer_id}", json={"include_explanations": False}
+    ).json()
+
+    assert body["shap_top_features"]["CLV"] == []
+    assert body["predicted_clv"] is not None
+
+
+def test_predict_unknown_customer_returns_404_envelope(client):
+    response = client.post("/v1/predict/99999999")
+
+    assert response.status_code == 404
+    body = response.json()
+    assert body["error"] == "customer_not_found"
+    assert body["request_id"]
+
+
+def test_predict_rejects_negative_customer_id(client):
+    assert client.post("/v1/predict/-5").status_code == 422
+
+
+def test_response_carries_request_id_and_timing_headers(client, known_customer_id):
+    response = client.post(f"/v1/predict/{known_customer_id}")
+
+    assert response.headers["X-Request-ID"]
+    assert float(response.headers["X-Response-Time-Ms"]) >= 0
+
+
+def test_supplied_request_id_is_echoed(client, known_customer_id):
+    response = client.post(
+        f"/v1/predict/{known_customer_id}", headers={"X-Request-ID": "trace-abc"}
+    )
+    assert response.headers["X-Request-ID"] == "trace-abc"
+
+
+# --- model-info -------------------------------------------------------------
+
+def test_model_info_exposes_registry(client):
+    body = client.get("/v1/model-info").json()
+
+    assert body["production_version"].startswith("v")
+    tasks = {model["task"] for model in body["models"]}
+    assert {"clv", "churn", "segmentation"} <= tasks
+
+
+def test_model_info_includes_feature_list_and_metrics(client):
+    models = client.get("/v1/model-info").json()["models"]
+    churn = next(model for model in models if model["task"] == "churn")
+
+    assert "PredictedCLV" in churn["feature_list"]
+    assert "ROC_AUC" in churn["metrics"]
+
+
+def test_model_info_reports_feature_store_stats(client):
+    store = client.get("/v1/model-info").json()["feature_store"]
+
+    assert store["customer_count"] > 0
+    assert store["source_rows"] > 0
+
+
+# --- metrics ----------------------------------------------------------------
+
+def test_metrics_counts_requests_and_predictions(client, known_customer_id):
+    before = client.get("/v1/metrics").json()
+    client.post(f"/v1/predict/{known_customer_id}")
+    after = client.get("/v1/metrics").json()
+
+    assert after["total_predictions"] == before["total_predictions"] + 1
+    assert after["total_requests"] > before["total_requests"]
+
+
+def test_metrics_reports_uptime_and_model_version(client):
+    body = client.get("/v1/metrics").json()
+
+    assert body["uptime_seconds"] >= 0
+    assert body["model_version"].startswith("v")
+
+
+def test_metrics_latency_populated_after_predictions(client, known_customer_id):
+    client.post(f"/v1/predict/{known_customer_id}")
+    body = client.get("/v1/metrics").json()
+
+    assert body["avg_latency_ms"] is not None
+    assert body["avg_latency_ms"] > 0

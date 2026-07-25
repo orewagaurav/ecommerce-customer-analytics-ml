@@ -1,0 +1,90 @@
+{
+  "registry_version": "1.0",
+  "updated_at": "2026-07-25T07:56:01.553369+00:00",
+  "models": [
+    {
+      "name": "clv_regressor",
+      "version": "v20260725.0756",
+      "algorithm": "RandomForestRegressor_log",
+      "task": "clv",
+      "trained_at": "2026-07-25T07:12:56.821751+00:00",
+      "dataset_version": "1e44b696da0d",
+      "feature_list": [
+        "Recency",
+        "Frequency",
+        "Monetary",
+        "AverageBasketSize",
+        "PurchaseFrequency",
+        "Tenure",
+        "AvgInterPurchaseDays",
+        "DistinctProducts",
+        "AvgItemsPerInvoice",
+        "RecentRevenueShare",
+        "Country"
+      ],
+      "metrics": {
+        "RMSE": 5620.236456,
+        "R2": 0.035994,
+        "MAE": 548.597198,
+        "SpearmanR": 0.588622,
+        "TopDecileLift": 3.529261,
+        "CV_R2_mean": 0.441545,
+        "CV_R2_std": 0.140579
+      },
+      "status": "production",
+      "notes": "Selected on Spearman rank correlation; RMSE is outlier-dominated."
+    },
+    {
+      "name": "churn_classifier",
+      "version": "v20260725.0756",
+      "algorithm": "RandomForestClassifier",
+      "task": "churn",
+      "trained_at": "2026-07-25T07:12:56.821751+00:00",
+      "dataset_version": "1e44b696da0d",
+      "feature_list": [
+        "Recency",
+        "Frequency",
+        "Monetary",
+        "AverageBasketSize",
+        "PurchaseFrequency",
+        "Tenure",
+        "AvgInterPurchaseDays",
+        "DistinctProducts",
+        "AvgItemsPerInvoice",
+        "RecentRevenueShare",
+        "PredictedCLV",
+        "ClusterLabel"
+      ],
+      "metrics": {
+        "Accuracy": 0.754021,
+        "Precision": 0.76161,
+        "Recall": 0.822742,
+        "F1": 0.790997,
+        "ROC_AUC": 0.813084,
+        "BrierScore": 0.172988,
+        "CV_ROC_AUC_mean": 0.787652,
+        "CV_ROC_AUC_std": 0.00557
+      },
+      "status": "production",
+      "notes": "PredictedCLV is generated out-of-fold to avoid label leakage."
+    },
+    {
+      "name": "rfm_segmenter",
+      "version": "v20260725.0756",
+      "algorithm": "KMeans",
+      "task": "segmentation",
+      "trained_at": "2026-07-25T07:12:56.821751+00:00",
+      "dataset_version": "1e44b696da0d",
+      "feature_list": [
+        "Recency",
+        "Frequency",
+        "Monetary"
+      ],
+      "metrics": {
+        "n_clusters": 3.0
+      },
+      "status": "production",
+      "notes": "Segments: At Risk, Champions, Loyal Customers"
+    }
+  ]
+}
