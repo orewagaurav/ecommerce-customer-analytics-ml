@@ -18,6 +18,8 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
+if str(PROJECT_ROOT / "benchmarks") not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
 
 import pandas as pd
 
@@ -34,13 +36,20 @@ def _percentile(values: list[float], pct: float) -> float:
 
 
 def benchmark_legacy(customer_ids: list[int], settings, runs: int) -> dict:
-    """The original path: re-read the CSV and re-aggregate on every call."""
-    from src.predict import predict_customer
+    """The original path: re-read the CSV and re-aggregate on every call.
+
+    Requires the processed CSV, which is no longer tracked in git. Returns None
+    when it is absent so the benchmark still runs on a fresh clone.
+    """
+    from benchmarks.legacy_baseline import predict_customer_legacy
+
+    if not settings.data_path.exists():
+        return None
 
     timings: list[float] = []
     for customer_id in customer_ids[:runs]:
         started = time.perf_counter()
-        predict_customer(customer_id, settings.data_path, settings.model_path)
+        predict_customer_legacy(customer_id, settings.data_path, settings.model_path)
         timings.append((time.perf_counter() - started) * 1000)
 
     return _summarise("legacy_csv", timings)
@@ -94,12 +103,15 @@ def measure_startup(settings) -> dict:
     """Cold-start cost of each data access strategy."""
     gc.collect()
 
-    started = time.perf_counter()
-    csv_frame = pd.read_csv(settings.data_path)
-    csv_seconds = time.perf_counter() - started
-    csv_mb = csv_frame.memory_usage(deep=True).sum() / 1024**2
-    del csv_frame
-    gc.collect()
+    csv_seconds, csv_mb, csv_file_mb = None, None, None
+    if settings.data_path.exists():
+        started = time.perf_counter()
+        csv_frame = pd.read_csv(settings.data_path)
+        csv_seconds = round(time.perf_counter() - started, 3)
+        csv_mb = round(csv_frame.memory_usage(deep=True).sum() / 1024**2, 1)
+        csv_file_mb = round(settings.data_path.stat().st_size / 1024**2, 1)
+        del csv_frame
+        gc.collect()
 
     tracemalloc.start()
     started = time.perf_counter()
@@ -110,11 +122,11 @@ def measure_startup(settings) -> dict:
     tracemalloc.stop()
 
     return {
-        "csv_load_seconds": round(csv_seconds, 3),
-        "csv_memory_mb": round(csv_mb, 1),
+        "csv_load_seconds": csv_seconds,
+        "csv_memory_mb": csv_mb,
+        "csv_file_mb": csv_file_mb,
         "feature_store_load_seconds": round(store_seconds, 3),
         "feature_store_peak_mb": round(peak / 1024**2, 1),
-        "csv_file_mb": round(settings.data_path.stat().st_size / 1024**2, 1),
         "feature_store_file_mb": round(
             settings.feature_store_path.stat().st_size / 1024**2, 3
         ),
@@ -138,11 +150,13 @@ def main() -> None:
     # Legacy path re-reads 80 MB per call, so a small sample is enough.
     print("Benchmarking legacy CSV path (5 runs, slow by construction)...")
     legacy = benchmark_legacy(customer_ids, settings, runs=5)
+    if legacy is None:
+        print("  skipped: processed CSV absent (run scripts/get_data.py to compare)")
 
-    speedup = round(legacy["mean_ms"] / fast["mean_ms"], 1)
+    speedup = round(legacy["mean_ms"] / fast["mean_ms"], 1) if legacy else None
     results = {
         "startup": startup,
-        "benchmarks": [legacy, fast, fast_no_shap],
+        "benchmarks": [entry for entry in (legacy, fast, fast_no_shap) if entry],
         "speedup_vs_legacy": speedup,
     }
 
@@ -158,8 +172,11 @@ def main() -> None:
             f"{entry['median_ms']:>9.1f}ms{entry['p95_ms']:>9.1f}ms"
         )
     print("=" * 66)
-    print(f"Speed-up vs legacy CSV path: {speedup}x")
-    print(f"Data file: {startup['csv_file_mb']} MB -> {startup['feature_store_file_mb']} MB")
+    if speedup:
+        print(f"Speed-up vs legacy CSV path: {speedup}x")
+        print(f"Data file: {startup['csv_file_mb']} MB -> {startup['feature_store_file_mb']} MB")
+    else:
+        print(f"Feature store: {startup['feature_store_file_mb']} MB")
     print(f"Results written to {output}")
 
 

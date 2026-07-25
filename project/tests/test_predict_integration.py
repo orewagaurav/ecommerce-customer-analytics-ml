@@ -11,11 +11,12 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from src.predict import load_artifacts, predict_customer
+from src.predict import build_service, predict_customer
+from src.services.prediction_service import PredictionService
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MODELS_DIR = PROJECT_ROOT / "models"
-DATA_PATH = PROJECT_ROOT / "data" / "processed_online_retail_II.csv"
+FEATURE_STORE = PROJECT_ROOT / "feature_store" / "features.parquet"
 
 REQUIRED_ARTIFACTS = [
     "rfm_kmeans_artifacts.joblib",
@@ -25,8 +26,8 @@ REQUIRED_ARTIFACTS = [
 
 artifacts_present = all((MODELS_DIR / name).exists() for name in REQUIRED_ARTIFACTS)
 pytestmark = pytest.mark.skipif(
-    not (artifacts_present and DATA_PATH.exists()),
-    reason="trained artifacts or processed dataset not available",
+    not (artifacts_present and FEATURE_STORE.exists()),
+    reason="trained artifacts or feature store not available",
 )
 
 
@@ -38,15 +39,17 @@ def known_customer_id() -> int:
 
 @pytest.fixture(scope="module")
 def prediction(known_customer_id) -> dict:
-    return predict_customer(known_customer_id, DATA_PATH, MODELS_DIR)
+    return predict_customer(known_customer_id, FEATURE_STORE, MODELS_DIR)
 
 
 def test_artifacts_carry_a_shap_background_sample():
     """Without a background sample, per-customer SHAP silently returns zeros."""
-    artifacts = load_artifacts(MODELS_DIR)
+    import joblib
 
-    for task in ("clv", "churn"):
-        background = artifacts[task].get("background_sample")
+    for task, filename in (("clv", "clv_model_artifacts.joblib"),
+                           ("churn", "churn_model_artifacts.joblib")):
+        artifacts = joblib.load(MODELS_DIR / filename)
+        background = artifacts.get("background_sample")
         assert background is not None, f"{task} artifacts are missing background_sample"
         assert len(background) > 1, "background must contain more than the explained row"
 
@@ -76,15 +79,23 @@ def test_per_customer_shap_is_not_all_zero(prediction):
 
 def test_recorded_best_model_matches_saved_pipeline():
     """The report name and the pickled estimator must not drift apart."""
-    artifacts = load_artifacts(MODELS_DIR)
+    import joblib
 
-    for task in ("clv", "churn"):
-        recorded = artifacts[task]["best_model"]
-        assert recorded in artifacts[task]["metrics"], (
-            f"{task} best_model '{recorded}' is absent from its own metrics table"
+    for filename in ("clv_model_artifacts.joblib", "churn_model_artifacts.joblib"):
+        artifacts = joblib.load(MODELS_DIR / filename)
+        recorded = artifacts["best_model"]
+        assert recorded in artifacts["metrics"], (
+            f"best_model '{recorded}' is absent from its own metrics table"
         )
 
 
-def test_unknown_customer_raises_value_error():
-    with pytest.raises(ValueError, match="not found"):
-        predict_customer(-12345, DATA_PATH, MODELS_DIR)
+def test_cli_and_service_share_one_implementation():
+    """predict.py must delegate, not hold a second copy of the scoring logic."""
+    assert isinstance(build_service(), PredictionService)
+
+
+def test_unknown_customer_raises_not_found():
+    from src.feature_store import CustomerNotFoundError
+
+    with pytest.raises(CustomerNotFoundError):
+        predict_customer(-12345, FEATURE_STORE, MODELS_DIR)

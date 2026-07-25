@@ -26,6 +26,18 @@ This repository solves all four in one pipeline and exposes outputs through a da
 ---
 
 ## 2. Dataset
+
+**Not required to run the service.** The feature store (~1 MB of parquet) is
+committed and is what the API and dashboard read. The source CSV is only needed
+to retrain or to rebuild the feature store, and is fetched with:
+
+```bash
+python scripts/get_data.py
+```
+
+The ~80 MB processed CSV is deliberately **not** tracked in git: it is fully
+derivable, and committing it put it in every clone permanently.
+
 - Download from Kaggle:
 - https://www.kaggle.com/datasets/mashlyn/online-retail-ii-uci
 - Source: Online Retail II (UCI / Kaggle format)
@@ -454,7 +466,12 @@ Measured with `python project/benchmarks/benchmark.py`, 60 runs per path.
 | | Before | After |
 |---|---|---|
 | Inference data file | 79.9 MB CSV | 357 KB parquet |
+| Tracked repo size | ~151 MB | **20.3 MB** |
 | Feature lookup | full re-aggregation of ~800k rows | O(1) dict lookup |
+
+Model artifacts are stored with `compress=3`, which cuts them from 70.7 MB to
+17.6 MB (4.0x) and leaves predictions byte-identical; the cost is a ~1.5 s
+one-time load at startup, not per request.
 
 Inside Docker on macOS, steady state is ~550 ms with SHAP and ~75 ms without —
 roughly 25% above native, which is Docker Desktop VM overhead. The first request

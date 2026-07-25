@@ -65,6 +65,10 @@ except Exception:  # pragma: no cover
 
 RANDOM_STATE = 42
 
+# Forest artifacts are ~70 MB uncompressed and live in git. compress=3 cuts that
+# ~4x for a negligible load-time cost, and the models are byte-identical on load.
+ARTIFACT_COMPRESSION = 3
+
 # Declared once so the trainers, the saved artifacts and inference cannot drift.
 CLV_NUMERIC_FEATURES = [
     "Recency",
@@ -453,6 +457,7 @@ def train_all_models(processed_csv: Path, models_dir: Path, horizon_days: int, c
             "inertia_by_k": clustering_artifacts.inertia_by_k,
         },
         models_dir / "rfm_kmeans_artifacts.joblib",
+        compress=ARTIFACT_COMPRESSION,
     )
     rfm_segments.to_csv(models_dir / "customer_segments.csv", index=False)
 
@@ -496,6 +501,7 @@ def train_all_models(processed_csv: Path, models_dir: Path, horizon_days: int, c
             ),
         },
         models_dir / "clv_model_artifacts.joblib",
+        compress=ARTIFACT_COMPRESSION,
     )
 
     # Module 3: Churn classification
@@ -534,6 +540,7 @@ def train_all_models(processed_csv: Path, models_dir: Path, horizon_days: int, c
             ),
         },
         models_dir / "churn_model_artifacts.joblib",
+        compress=ARTIFACT_COMPRESSION,
     )
 
     customer_predictions = churn_df[["CustomerID"] + CHURN_FEATURES].copy()

@@ -33,15 +33,21 @@ docker compose up --build
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
 
-# One-time: train, then materialise the feature store + registry
-python project/src/train_models.py
-python project/src/build_feature_store.py
-
 # Terminal 1 - API
 uvicorn src.api.main:app --app-dir project --port 8000
 
 # Terminal 2 - dashboard
 streamlit run project/app/streamlit_app.py
+```
+
+**No dataset download is needed to run the service.** The feature store
+(~1 MB of parquet) is committed and is what inference reads. The source CSV is
+only required to retrain:
+
+```bash
+python scripts/get_data.py            # download + preprocess (needs Kaggle CLI)
+python project/src/train_models.py
+python project/src/build_feature_store.py
 ```
 
 macOS note: XGBoost needs OpenMP. If `import xgboost` fails with
@@ -107,6 +113,7 @@ R² is reported (0.035) but **not** used for model selection — see
 
 **3.7× faster end to end; 27× when explanations aren't needed.**
 Inference data: 79.9 MB CSV → 357 KB parquet.
+Tracked repo: ~151 MB → **20.3 MB** (CSV untracked, artifacts compressed 4×).
 
 Reproduce with `python project/benchmarks/benchmark.py`.
 
@@ -375,8 +382,6 @@ Streamlit · Plotly · Docker · pytest · GitHub Actions
   won't move it.
 - SHAP is ~85% of an explained request. The feature store moved the bottleneck
   rather than removing it.
-- The 80 MB processed CSV is still committed, which makes CI checkout slow. It
-  should move to a download step.
 - Returns and cancellations are dropped in preprocessing, so `Monetary` is gross
   rather than net revenue.
 
