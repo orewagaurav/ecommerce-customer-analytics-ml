@@ -8,6 +8,7 @@ patching.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -41,7 +42,7 @@ def settings(tmp_path_factory) -> Settings:
 
 
 @pytest.fixture(scope="module")
-def client(settings) -> TestClient:
+def client(settings) -> Iterator[TestClient]:
     with TestClient(create_app(settings)) as test_client:
         yield test_client
 
