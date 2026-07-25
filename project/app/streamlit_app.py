@@ -27,11 +27,37 @@ from app.pages_extra import (
 )
 
 SETTINGS = get_settings()
-API = AnalyticsApiClient(
+
+_HTTP_BACKEND = AnalyticsApiClient(
     base_url=SETTINGS.api_base_url,
     api_version=SETTINGS.api_version,
     timeout=SETTINGS.request_timeout_seconds,
 )
+
+
+@st.cache_resource(show_spinner=False)
+def _local_backend():
+    """In-process backend, used when no API is reachable."""
+    from app.local_backend import LocalBackend
+
+    return LocalBackend(SETTINGS)
+
+
+@st.cache_resource(show_spinner="Connecting to scoring backend...")
+def _resolve_backend():
+    """Prefer the API; fall back to in-process scoring.
+
+    Under docker compose or locally the FastAPI service answers and is used.
+    On Streamlit Community Cloud there is no second process to host it, so the
+    dashboard scores in-process instead. Both routes call the same
+    PredictionService, so only the transport differs.
+    """
+    if _HTTP_BACKEND.is_available():
+        return _HTTP_BACKEND, "api"
+    return _local_backend(), "embedded"
+
+
+API, BACKEND_MODE = _resolve_backend()
 
 
 def predict_customer(customer_id: int, *_ignored) -> Dict:
@@ -147,15 +173,19 @@ def show_sidebar() -> str:
     ]
     selection = st.sidebar.radio("Select Page", pages)
 
-    # Connection state is worth surfacing: every scoring page depends on it.
+    # Which backend is answering matters: every scoring page depends on it.
     st.sidebar.divider()
-    if API.is_available():
+    try:
         info = API.model_info()
-        st.sidebar.success("API connected")
-        st.sidebar.caption(f"Model {info['production_version']}")
-    else:
-        st.sidebar.error("API unreachable")
-        st.sidebar.caption(f"Expected at {SETTINGS.api_base_url}")
+        if BACKEND_MODE == "api":
+            st.sidebar.success("Scoring via API")
+            st.sidebar.caption(f"{SETTINGS.api_base_url} · model {info['production_version']}")
+        else:
+            st.sidebar.info("Scoring in-process")
+            st.sidebar.caption(f"Embedded backend · model {info['production_version']}")
+    except Exception as exc:  # noqa: BLE001
+        st.sidebar.error("Scoring backend unavailable")
+        st.sidebar.caption(str(exc))
 
     return selection
 
