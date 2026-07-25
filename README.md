@@ -1,405 +1,351 @@
-# [Live🔗](https://ecommerce-customer-analytics-ml-iw5v4ndz7tnjtf3zxweari.streamlit.app)
-
-
 # E-Commerce Customer Analytics Platform
 
-Production-ready customer intelligence system built on the Online Retail II dataset.
+[![CI](https://github.com/orewagaurav/ecommerce-customer-analytics-ml/actions/workflows/ci.yml/badge.svg)](https://github.com/orewagaurav/ecommerce-customer-analytics-ml/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue)
+![Tests](https://img.shields.io/badge/tests-93%20passing-brightgreen)
 
-This project combines:
-1. Unsupervised learning for customer segmentation (RFM + K-Means)
-2. Supervised regression for Customer Lifetime Value (CLV)
-3. Supervised classification for churn prediction
-4. Rule-based business recommendations
-5. Interactive Streamlit dashboard for business users
+A production-style customer intelligence system built on the **Online Retail II**
+dataset (1M+ transactions). It segments customers, forecasts 90-day value,
+predicts churn, explains every prediction with SHAP, and recommends an action —
+served through a **FastAPI** service with a **Streamlit** dashboard on top.
 
----
-
-## 1. Problem Statement
-
-E-commerce teams need one unified platform that answers four practical questions:
-
-1. Which customer segment does a user belong to?
-2. What future value (CLV) can we expect from this customer?
-3. What is the probability this customer churns?
-4. What action should the business take now?
-
-This repository solves all four in one pipeline and exposes outputs through a dashboard.
+**[Live dashboard](https://ecommerce-customer-analytics-ml-iw5v4ndz7tnjtf3zxweari.streamlit.app)** ·
+[Full technical write-up](project/README.md)
 
 ---
 
-## 2. Dataset
-- Download from Kaggle:
-- https://www.kaggle.com/datasets/mashlyn/online-retail-ii-uci
-- Source: Online Retail II (UCI / Kaggle format)
-- File location: project/data/online_retail_II.csv
-- Core columns used:
-  - Invoice
-  - StockCode
-  - Description
-  - Quantity
-  - InvoiceDate
-  - Price
-  - Customer ID
-  - Country
+## Quickstart
 
-
----
-
-## 3. End-to-End Architecture
-
-```text
-Raw CSV (project/data/online_retail_II.csv)
-      |
-      v
-Data Preprocessing
-  - schema validation
-  - type conversion
-  - remove invalid rows
-  - create TotalAmount
-      |
-      v
-Processed Dataset (project/data/processed_online_retail_II.csv)
-      |
-      +-----------------------------+
-      |                             |
-      v                             v
-RFM Clustering                   CLV Regression
-(K-Means + Elbow)               (Linear/RF/XGB)
-      |                             |
-      +-------------+---------------+
-               |
-               v
-          Churn Classification
-         (Logistic/RF/XGB)
-               |
-               v
-      Recommendation Rules Engine
-               |
-               v
-        Streamlit Dashboard (5 pages)
+```bash
+docker compose up --build
 ```
 
+| | URL |
+|---|---|
+| API (Swagger) | http://localhost:8000/docs |
+| Dashboard | http://localhost:8501 |
+| Health | http://localhost:8000/v1/health |
+
+<details>
+<summary>Run without Docker</summary>
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements-dev.txt
+
+# One-time: train, then materialise the feature store + registry
+python project/src/train_models.py
+python project/src/build_feature_store.py
+
+# Terminal 1 - API
+uvicorn src.api.main:app --app-dir project --port 8000
+
+# Terminal 2 - dashboard
+streamlit run project/app/streamlit_app.py
+```
+
+macOS note: XGBoost needs OpenMP. If `import xgboost` fails with
+`Library not loaded: @rpath/libomp.dylib`, run `brew install libomp`.
+</details>
+
 ---
 
-## 4. Project Structure
+## Architecture
+
+```text
+              OFFLINE (batch)                          ONLINE (request path)
+ ┌────────────────────────────────────────┐     ┌──────────────────────────────┐
+ │ raw CSV (90 MB)                        │     │ Streamlit dashboard          │
+ │     ↓ data_preprocessing.py            │     │     │ HTTP                   │
+ │ processed transactions                 │     │     ↓                        │
+ │     ↓ feature_engineering.py           │     │ FastAPI /v1/predict/{id}     │
+ │ RFM + behavioural features             │     │         /v1/health           │
+ │     ↓ train_models.py                  │     │         /v1/model-info       │
+ │ ├── KMeans segmentation                │     │         /v1/metrics          │
+ │ ├── CLV regression   (log1p / 2-stage) │     │     ↓                        │
+ │ └── Churn classifier (OOF CLV feature) │     │ PredictionService            │
+ │     ↓ build_feature_store.py           │     │     ↓                        │
+ │ features.parquet (357 KB) ─────────────┼────▶│ FeatureStore   O(1) lookup   │
+ │ dashboard aggregates                   │     │ model artifacts (cached)     │
+ │ model_registry.json       ─────────────┼────▶│ SHAP explainer               │
+ └────────────────────────────────────────┘     │     ↓                        │
+                                                │ prediction history (audit)   │
+                                                └──────────────────────────────┘
+```
+
+**The core idea:** everything expensive happens offline. A request is a
+dictionary lookup plus a model call — never a data scan.
+
+---
+
+## Results
+
+Honest, leakage-free numbers from `project/models/training_report.json`.
+
+| Model | Metric | Value |
+|---|---|---|
+| **Churn** | ROC-AUC (holdout / 5-fold CV) | **0.813 / 0.788** |
+| | Brier score | 0.173 |
+| **CLV** | Spearman rank correlation | **0.589** |
+| | Top-decile lift | **3.53×** |
+| | MAE | 549 |
+| **Segmentation** | K (elbow-selected) | 3 |
+
+**Top-decile lift 3.53× means:** the top 10% of customers the model flags go on
+to spend 3.5× the average customer. That is the number a marketing team acts on.
+
+R² is reported (0.035) but **not** used for model selection — see
+[why](#2-the-metric-was-the-problem-not-just-the-model).
+
+## Performance
+
+| Path | Mean | p95 |
+|---|---|---|
+| Legacy (re-read 80 MB CSV per call) | 1586.5 ms | 1624.9 ms |
+| Feature store + SHAP | **426.6 ms** | 482.7 ms |
+| Feature store, no SHAP | **57.8 ms** | 60.5 ms |
+
+**3.7× faster end to end; 27× when explanations aren't needed.**
+Inference data: 79.9 MB CSV → 357 KB parquet.
+
+Reproduce with `python project/benchmarks/benchmark.py`.
+
+---
+
+## What to explain in an interview
+
+The models here are ordinary. **The engineering judgement is what's worth
+talking about.** Four stories, in descending order of impact.
+
+### 1. I found and fixed target leakage in a stacked model
+
+**The setup.** The churn model takes `PredictedCLV` as a feature. The CLV model
+is trained to predict `FutureRevenue` over the same 90-day window the churn
+label is derived from. And `FutureRevenue > 0` is *exactly* `ChurnLabel == 0`.
+
+**What went wrong.** The CLV model scored its own training rows *in-sample*. For
+those rows it had effectively memorised the answer, so `PredictedCLV` handed the
+churn model a copy of its own label.
+
+**How I caught it.** Adding behavioural features pushed churn ROC-AUC to 0.969.
+That was implausibly good, so instead of shipping it I measured the suspect
+feature directly:
+
+| | AUC |
+|---|---|
+| `PredictedCLV` **alone** as a churn score | **0.9606** |
+| Churn model with `PredictedCLV` removed | **0.8011** |
+
+One feature was carrying essentially the whole model.
+
+**The fix.** Generate `PredictedCLV` with `cross_val_predict`, so every customer
+is scored by a CLV model that never saw them. Honest ablation afterwards:
+
+| Churn feature set | ROC-AUC |
+|---|---|
+| Original | 0.797 |
+| + Recency | 0.798 |
+| + behavioural features | **0.810** |
+
+**The uncomfortable part — say it out loud.** This leak predated the change. It
+had inflated the original 0.795 baseline too, and grew worse as the CLV model
+improved. I had earlier reported 0.879 as an improvement. It wasn't. I corrected
+it in the README and the PR rather than quietly restating it.
+
+> **Why this lands:** most candidates present their best number. Saying "my
+> number was wrong, here's how I proved it and what it actually is" signals
+> seniority far more than 0.97 ever would.
+
+### 2. The metric was the problem, not just the model
+
+CLV showed R² = 0.036. The obvious read is "the model is bad." I checked the
+data instead:
+
+- **56.6%** of customers have zero future revenue (zero-inflated target)
+- Skew **27.96**, dropping to **0.42** under `log1p`
+- The single largest holdout customer contributes **81% of the total sum of
+  squares**, and is larger than anything in training
+
+So R² and RMSE were mostly measuring how well one unlearnable outlier was fit.
+Different models barely moved the number because the number wasn't about them.
+
+**What I changed:** selection moved to **Spearman rank correlation**, reported
+with **top-decile lift**. Every downstream consumer of CLV here — VIP flagging,
+priority ordering, campaign targeting — uses the *ranking*, not the absolute
+currency value. So measure the ranking.
+
+**Expect the pushback:** *"Isn't switching metrics moving the goalposts?"* The
+metric must match the decision the model feeds. If we billed customers on
+predicted value, RMSE would be correct and the honest conclusion would be that
+the model isn't usable. We rank them for outreach, so rank quality is the target.
+
+### 3. A bug no accuracy metric could ever catch
+
+Every per-customer SHAP contribution was **exactly zero**. The dashboard's "Why
+this prediction?" panel rendered confidently, showing arbitrary country dummies
+as top features.
+
+**Cause:** single-row scoring passed that one row to `shap.Explainer` as both the
+sample *and* the background distribution. Explaining a point against itself gives
+zero contribution for every feature.
+
+**Why it matters:** accuracy, AUC and Brier were all unaffected. No metric,
+dashboard, or test would have flagged it — it was only visible by reading the
+output. The fix persists a 200-row background sample per model.
+
+**The lesson:** model quality metrics don't test model *plumbing*. That is why
+this project has a test suite and not just a metrics table.
+
+### 4. Debugging discipline: XGBoost that never ran
+
+`requirements.txt` pinned XGBoost, the README advertised it, and
+`training_report.json` contained no XGBoost run at all. A
+`try/except Exception` around the import was swallowing the failure silently.
+
+The real cause was **not** a version incompatibility — it was a missing macOS
+OpenMP runtime (`libomp.dylib`). One `brew install libomp` fixed it.
+
+**The engineering response, not just the fix:** CI now installs `libgomp1` and
+runs `python -c "import xgboost"` as an explicit step, so a swallowed
+`ImportError` can never silently return.
+
+> **Transferable point:** a bare `except Exception` that degrades silently is
+> worse than a crash. The system looked like it was working for months.
+
+### Design decisions worth defending
+
+| Decision | Why |
+|---|---|
+| Feature store (parquet) instead of live aggregation | Inference re-read 80 MB and re-aggregated 800k rows per request, then used one row. Latency scaled with dataset size — unacceptable on a serving path. |
+| `/predict` is `def`, not `async def` | Scoring is CPU-bound (sklearn + SHAP). FastAPI runs sync handlers in a threadpool; `async` would block the event loop for the whole request. |
+| JSON registry, not MLflow | No server to run, version-controls with the code, honest about project scale. MLflow when experiment volume justifies it. |
+| Split `process` vs `lifetime` metrics | A container restart made `/metrics` report 0 predictions next to a latency average computed from 15 of them. Mixing process counters with persisted aggregates produces self-contradicting payloads. |
+| Streamlit talks HTTP, imports no model code | Makes the API/UI split real rather than cosmetic. The dashboard works unchanged if the API moves hosts. |
+| Kept the raw-target linear model as a candidate | It's the original baseline. Keeping it in the report anchors every claimed improvement against what shipped first. |
+
+### Questions you should expect
+
+**"Your churn AUC is only 0.81 — why so low?"**
+Because it's honest; it was 0.97 with leakage. Predicting whether a retail
+customer returns within 90 days from RFM aggregates has a real ceiling, and 0.81
+with a tight CV band (±0.005) is a defensible estimate of it.
+
+**"Why didn't the new features help CLV?"**
+They didn't — Spearman went 0.588 → 0.589, and I report that plainly. Two rounds
+of feature work suggest the RFM-aggregate framing is exhausted; the remaining
+signal is product-category affinity and seasonality, which this dataset barely
+carries. Knowing when to stop tuning is part of the job.
+
+**"Walk me through a request."**
+`POST /v1/predict/{id}` → middleware assigns a request ID and starts a timer →
+DI resolves `PredictionService` from the container on `app.state` → O(1) feature
+lookup from the parquet store → KMeans assigns a segment → CLV pipeline predicts
+→ churn pipeline consumes CLV + segment → SHAP explains both against a persisted
+background → rule engine maps outputs to an action → result is appended to the
+audit parquet → JSON response with latency and model version.
+
+**"How do you know your tests actually work?"**
+Both regression suites were mutation-tested: I reintroduced each bug and
+confirmed the test fails. Removing the SHAP background reproduces the original
+bug at exactly `0.000000`; reverting `build_churn_dataset` to the full frame
+fails with `got 5100.0, expected 100.0`. A test that has never failed hasn't
+been shown to work.
+
+**"What would you do next?"**
+Product-category and seasonality features for CLV; an uplift model for the
+recommendation engine so we target persuadables instead of lost causes; and
+moving SHAP off the hot path with a cache, since it's ~85% of an explained
+request.
+
+---
+
+## API
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /v1/predict/{customer_id}` | Segment, CLV, churn, SHAP, recommendation |
+| `GET /v1/health` | Liveness + readiness (models and store actually loadable) |
+| `GET /v1/model-info` | Registry: versions, algorithms, metrics, feature lists |
+| `GET /v1/metrics` | Process and lifetime operational counters |
+| `GET /v1/customers` | Scoreable customer IDs |
+| `GET /docs` | Swagger UI |
+
+```bash
+curl -X POST http://localhost:8000/v1/predict/12748 \
+     -H 'Content-Type: application/json' \
+     -d '{"include_explanations": true}'
+```
+
+Pass `{"include_explanations": false}` for a 58 ms response instead of 427 ms.
+
+Errors use one envelope (`error`, `detail`, `request_id`, `context`), and every
+response carries `X-Request-ID` and `X-Response-Time-Ms`.
+
+---
+
+## Testing
+
+```bash
+pytest                 # 93 tests
+pytest --cov=src       # with coverage
+```
+
+| Suite | Protects |
+|---|---|
+| `test_leakage.py` | Features come from history before the cutoff; labels from after |
+| `test_out_of_fold.py` | `PredictedCLV` cannot memorise the churn label |
+| `test_explainability.py` | SHAP contributions are non-zero for single-customer scoring |
+| `test_api.py` | Full API contract through `TestClient` |
+| `test_train_models.py` | Selection metrics + two-stage estimator |
+| `test_feature_engineering.py` | RFM arithmetic, elbow, segment labelling |
+| `test_behavioural_features.py` | Tenure, inter-purchase timing, momentum |
+| `test_data_preprocessing.py` | Returns, nulls, unparseable dates removed |
+| `test_recommendation_engine.py` | Rule precedence and reachability |
+| `test_predict_integration.py` | End-to-end scoring against committed artifacts |
+
+CI runs lint, the feature-store build, and the full suite on Python 3.11 and 3.12.
+
+---
+
+## Project structure
 
 ```text
 project/
 ├── app/
-│   └── streamlit_app.py
-├── data/
-│   └── online_retail_II.csv
-│   └── processed_online_retail_II.csv
-├── models/
-│   ├── rfm_kmeans_artifacts.joblib
-│   ├── clv_model_artifacts.joblib
-│   ├── churn_model_artifacts.joblib
-│   ├── customer_segments.csv
-│   ├── customer_predictions.csv
-│   ├── clv_feature_importance.csv
-│   ├── churn_feature_importance.csv
-│   ├── elbow_plot.png
-│   ├── rfm_clusters_2d.png
-│   └── training_report.json
-├── notebooks/
-│   ├── eda.ipynb
-│   ├── rfm_clustering.ipynb
-│   ├── clv_regression.ipynb
-│   └── churn_classification.ipynb
+│   ├── streamlit_app.py        # dashboard (HTTP client only, no model code)
+│   └── api_client.py           # typed wrapper over the scoring API
 ├── src/
-│   ├── data_preprocessing.py
-│   ├── feature_engineering.py
-│   ├── train_models.py
-│   └── predict.py
-├── requirements.txt
-└── README.md
+│   ├── api/                    # FastAPI: routes, schemas, DI, error handlers
+│   ├── services/               # PredictionService, PredictionHistoryService
+│   ├── config.py               # Pydantic Settings (env-driven)
+│   ├── logging_config.py       # structured JSON logging
+│   ├── feature_store.py        # offline build + lazy O(1) lookup
+│   ├── analytics_store.py      # precomputed dashboard aggregates
+│   ├── registry.py             # model registry
+│   ├── feature_engineering.py  # RFM + behavioural features
+│   ├── train_models.py         # training orchestration
+│   └── explainability.py       # SHAP
+├── tests/                      # 93 tests
+├── benchmarks/                 # latency + memory harness
+└── feature_store/              # generated parquet artifacts
 ```
 
----
+## Stack
 
-## 5. Technology Stack
-
-### Core Language
-- Python 3.14+
-
-### Data and ML Libraries
-- pandas, numpy
-- scikit-learn
-- xgboost
-- joblib
-- shap (installed for explainability extensions)
-
-### Visualization and UI
-- matplotlib, seaborn
-- plotly
-- streamlit
-
-### Notebook Environment
-- jupyter
+Python 3.11 · scikit-learn · XGBoost · SHAP · pandas · FastAPI · Pydantic ·
+Streamlit · Plotly · Docker · pytest · GitHub Actions
 
 ---
 
-## 6. How the System Works (Detailed)
+## Honest limitations
 
-### 6.1 Data Preprocessing
-Implemented in src/data_preprocessing.py
+- CLV ranking (Spearman 0.589) is near this feature set's ceiling; more tuning
+  won't move it.
+- SHAP is ~85% of an explained request. The feature store moved the bottleneck
+  rather than removing it.
+- The 80 MB processed CSV is still committed, which makes CI checkout slow. It
+  should move to a download step.
+- Returns and cancellations are dropped in preprocessing, so `Monetary` is gross
+  rather than net revenue.
 
-Pipeline logic:
-1. Load CSV with tolerant parsing for malformed lines
-2. Validate expected schema
-3. Convert date and numeric fields
-4. Remove null-critical rows
-5. Remove non-positive Quantity and Price rows
-6. Create engineered columns:
-  - CustomerID (integer normalized from Customer ID)
-  - TotalAmount = Quantity × Price
-7. Save cleaned dataset
-
-Output artifact:
-- project/data/processed_online_retail_II.csv
-
-### 6.2 Feature Engineering
-Implemented in src/feature_engineering.py
-
-Shared customer-level features:
-- Recency
-- Frequency
-- Monetary
-- AverageBasketSize
-- PurchaseFrequency
-- Country
-
-Additional feature datasets:
-- CLV dataset with FutureRevenue target (next 90 days window)
-- Churn dataset with ChurnLabel based on recency threshold
-
-### 6.3 Module 1: RFM Clustering
-1. Build customer RFM
-2. Standardize with StandardScaler
-3. Compute Elbow inertias for K = 2..10
-4. Select K using elbow heuristic
-5. Train K-Means
-6. Map numeric clusters to business labels:
-  - Champions
-  - Loyal Customers
-  - At Risk
-  - Lost Customers (if present by K)
-
-Saved outputs:
-- rfm_kmeans_artifacts.joblib
-- customer_segments.csv
-- elbow_plot.png
-- rfm_clusters_2d.png
-
-### 6.4 Module 2: CLV Regression
-Target:
-- FutureRevenue over next 90 days
-
-Features:
-- Recency, Frequency, Monetary
-- AverageBasketSize, PurchaseFrequency
-- Country (one-hot encoded)
-
-Models trained:
-- Linear Regression
-- Random Forest Regressor
-- XGBoost Regressor (if available)
-
-Metrics:
-- RMSE
-- R2
-
-Best model selection criterion:
-- Minimum RMSE
-
-Saved outputs:
-- clv_model_artifacts.joblib
-- clv_feature_importance.csv
-
-### 6.5 Module 3: Churn Classification
-Label definition:
-- ChurnLabel = 1 if Recency > threshold (default 90 days)
-
-Features:
-- Recency, Frequency, Monetary
-- PredictedCLV
-- ClusterLabel
-
-Models trained:
-- Logistic Regression
-- Random Forest Classifier
-- XGBoost Classifier (if available)
-
-Metrics:
-- Accuracy
-- Precision
-- Recall
-- F1
-- ROC-AUC
-
-Best model selection criterion:
-- Maximum ROC-AUC
-
-Saved outputs:
-- churn_model_artifacts.joblib
-- churn_feature_importance.csv
-
-### 6.6 Business Recommendation Layer
-Implemented in src/feature_engineering.py and used in src/predict.py
-
-Rules:
-1. If churn_probability > 0.7 → Offer Discount
-2. If predicted CLV is high → Mark as VIP
-3. If cluster label = At Risk → Send Retention Campaign
-4. Else fallback → Maintain Engagement
-
-### 6.7 Explainability
-Current explainability uses model-native feature importance:
-- Tree models: feature_importances_
-- Linear models: absolute coefficient magnitude
-
-For single-customer inference:
-- Top important feature categories are converted into plain-language reasons
-  (for example: recency days, monetary spend, CLV contribution)
-
----
-
-## 7. Streamlit Dashboard
-
-Implemented in app/streamlit_app.py with 5 pages:
-
-1. Overview Dashboard
-  - Revenue KPIs
-  - Monthly trend
-  - High churn risk percentage
-
-2. Customer Segmentation
-  - Cluster distribution
-  - RFM scatter views
-
-3. CLV Prediction
-  - Input customer ID
-  - Predicted CLV
-  - CLV feature importance + explanation
-
-4. Churn Prediction
-  - Input customer ID
-  - Churn probability
-  - Churn feature importance + explanation
-
-5. Recommendations
-  - Input customer ID
-  - Unified output:
-    - Cluster Label
-    - Predicted CLV
-    - Churn Probability
-    - Recommended Actions
-
----
-
-## 8. How to Run Locally
-
-Run commands from repository root.
-
-### Step 1: Create and activate virtual environment
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-```
-
-### Step 2: Install dependencies
-```bash
-pip install -r project/requirements.txt
-```
-
-### Step 3: Preprocess data
-```bash
-python project/src/data_preprocessing.py \
-  --input_csv project/data/online_retail_II.csv \
-  --output_csv project/data/processed_online_retail_II.csv
-```
-
-### Step 4: Train all models
-```bash
-python project/src/train_models.py \
-  --processed_csv project/data/processed_online_retail_II.csv \
-  --models_dir project/models \
-  --horizon_days 90 \
-  --churn_days 90
-```
-
-### Step 5: Launch dashboard
-```bash
-streamlit run project/app/streamlit_app.py
-```
-
-Then open the URL printed in terminal (typically http://localhost:8501).
-
----
-
-## 9. One-Line Run (after repository is cloned)
-
-```bash
-python3 -m venv .venv && source .venv/bin/activate && pip install -r project/requirements.txt && python project/src/data_preprocessing.py --input_csv project/data/online_retail_II.csv --output_csv project/data/processed_online_retail_II.csv && python project/src/train_models.py --processed_csv project/data/processed_online_retail_II.csv --models_dir project/models --horizon_days 90 --churn_days 90 && streamlit run project/app/streamlit_app.py
-```
-
----
-
-## 10. Notebooks
-
-- notebooks/eda.ipynb: data understanding and quality checks
-- notebooks/rfm_clustering.ipynb: clustering workflow
-- notebooks/clv_regression.ipynb: CLV modeling experiments
-- notebooks/churn_classification.ipynb: churn modeling experiments
-
----
-
-## 11. Deployment (Streamlit Cloud)
-
-1. Push repository to GitHub
-2. Go to Streamlit Community Cloud
-3. Create a new app and select:
-  - Repo: your repository
-  - Branch: main
-  - App file: project/app/streamlit_app.py
-4. Add project/data/online_retail_II.csv to repo or configure remote data access
-5. Deploy
-
-Deployment link:
-- Add your live URL here after deployment
-
----
-
-## 12. Troubleshooting
-
-1. Dashboard opens but shows warning about missing artifacts
-  - Run the training step first to generate files in project/models
-
-2. Module not found errors
-  - Ensure virtual environment is active
-  - Reinstall dependencies from project/requirements.txt
-
-3. Streamlit port issue
-  - Use a custom port:
-    streamlit run project/app/streamlit_app.py --server.port 8503
-
-4. Dataset not found
-  - Confirm project/data/online_retail_II.csv exists
-
----
-
-## 13. Current Status
-
-Implemented and connected end-to-end:
-1. Data preprocessing
-2. RFM clustering
-3. CLV regression
-4. Churn classification
-5. Recommendation engine
-6. Streamlit dashboard
-
-This means you can now enter a Customer ID in the dashboard and directly get:
-- Cluster label
-- Predicted CLV
-- Churn probability
-- Recommended action
+See [project/README.md](project/README.md) for the full technical write-up.

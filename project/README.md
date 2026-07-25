@@ -45,41 +45,44 @@ This repository solves all four in one pipeline and exposes outputs through a da
 
 ## 3. End-to-End Architecture
 
+Training and feature materialisation run offline. The request path does no data
+scanning: it is a keyed lookup plus a model call.
+
 ```text
-Raw CSV (project/data/online_retail_II.csv)
-      |
-      v
-Data Preprocessing
-  - schema validation
-  - type conversion
-  - remove invalid rows
-  - create TotalAmount
-      |
-      v
-Processed Dataset (project/data/processed_online_retail_II.csv)
-      |
-      +-----------------------------+
-      |                             |
-      v                             v
-RFM Clustering                   CLV Regression
-(K-Means + Elbow)               (Linear/RF/XGB)
-      |                             |
-      +-------------+---------------+
-               |
-               v
-          Churn Classification
-         (Logistic/RF/XGB)
-               |
-               v
-      Recommendation Rules Engine
-               |
-               v
-            SHAP Explainability
-          (global + per-customer)
-               |
-               v
-        Streamlit Dashboard (5 pages)
+              OFFLINE (batch)                          ONLINE (request path)
+ ┌────────────────────────────────────────┐     ┌──────────────────────────────┐
+ │ raw CSV (90 MB)                        │     │ Streamlit dashboard          │
+ │     ↓ data_preprocessing.py            │     │     │ HTTP                   │
+ │ processed transactions                 │     │     ↓                        │
+ │     ↓ feature_engineering.py           │     │ FastAPI /v1/predict/{id}     │
+ │ RFM + behavioural features             │     │         /v1/health           │
+ │     ↓ train_models.py                  │     │         /v1/model-info       │
+ │ ├── KMeans segmentation                │     │         /v1/metrics          │
+ │ ├── CLV regression   (log1p / 2-stage) │     │     ↓                        │
+ │ └── Churn classifier (OOF CLV feature) │     │ PredictionService            │
+ │     ↓ build_feature_store.py           │     │     ↓                        │
+ │ features.parquet (357 KB) ─────────────┼────▶│ FeatureStore   O(1) lookup   │
+ │ dashboard aggregates                   │     │ model artifacts (cached)     │
+ │ model_registry.json       ─────────────┼────▶│ SHAP explainer               │
+ └────────────────────────────────────────┘     │     ↓                        │
+                                                │ prediction history (audit)   │
+                                                └──────────────────────────────┘
 ```
+
+### 3.1 Layering
+
+| Layer | Modules | Responsibility |
+|---|---|---|
+| API | `src/api/` | HTTP contract, validation, DI, error translation |
+| Service | `src/services/` | Scoring orchestration, prediction audit log |
+| Data access | `feature_store.py`, `analytics_store.py`, `registry.py` | Materialised reads |
+| Domain | `feature_engineering.py`, `recommendation_engine.py`, `explainability.py` | Business logic |
+| Training | `train_models.py`, `build_feature_store.py` | Offline batch |
+
+Dependencies point inward: API depends on services, services on data access and
+domain, and the domain layer imports nothing from the API. Collaborators are
+injected through a container on `app.state`, so no module reaches for a
+singleton and every layer is testable in isolation.
 
 ---
 
@@ -88,37 +91,35 @@ RFM Clustering                   CLV Regression
 ```text
 project/
 ├── app/
-│   └── streamlit_app.py
-├── data/
-│   ├── online_retail_II.csv
-│   └── processed_online_retail_II.csv
-├── models/
-│   ├── rfm_kmeans_artifacts.joblib
-│   ├── clv_model_artifacts.joblib
-│   ├── churn_model_artifacts.joblib
-│   ├── customer_segments.csv
-│   ├── customer_predictions.csv
-│   ├── clv_feature_importance.csv
-│   ├── churn_feature_importance.csv
-│   ├── clv_shap_importance.png
-│   ├── churn_shap_importance.png
-│   ├── elbow_plot.png
-│   ├── rfm_clusters_2d.png
-│   └── training_report.json
-├── notebooks/
-│   ├── eda.ipynb
-│   ├── rfm_clustering.ipynb
-│   ├── clv_regression.ipynb
-│   └── churn_classification.ipynb
+│   ├── streamlit_app.py        # dashboard (HTTP client only, no model code)
+│   └── api_client.py           # typed wrapper over the scoring API
 ├── src/
+│   ├── api/
+│   │   ├── main.py             # application factory, middleware, lifespan
+│   │   ├── routes.py           # versioned endpoints
+│   │   ├── schemas.py          # Pydantic request/response contract
+│   │   ├── dependencies.py     # DI container
+│   │   └── errors.py           # domain exception -> HTTP translation
+│   ├── services/
+│   │   ├── prediction_service.py
+│   │   └── history_service.py
+│   ├── config.py               # Pydantic Settings
+│   ├── logging_config.py       # structured JSON logging
+│   ├── feature_store.py
+│   ├── analytics_store.py
+│   ├── registry.py
 │   ├── data_preprocessing.py
 │   ├── feature_engineering.py
-│   ├── recommendation_engine.py
 │   ├── explainability.py
+│   ├── recommendation_engine.py
 │   ├── train_models.py
-│   └── predict.py
-├── requirements.txt
-└── README.md
+│   ├── build_feature_store.py
+│   └── predict.py              # retained CLI entry point
+├── tests/                      # 93 tests
+├── benchmarks/
+├── models/                     # artifacts + training_report + registry
+├── feature_store/              # generated parquet
+└── notebooks/
 ```
 
 ---
@@ -257,7 +258,7 @@ Saved outputs:
 - churn_model_artifacts.joblib
 - churn_feature_importance.csv
 
-### 6.6 Business Recommendation Layer (Feature 1)
+### 6.6 Business Recommendation Layer
 Implemented in src/recommendation_engine.py and used in src/predict.py
 
 Rules:
@@ -271,7 +272,7 @@ Output fields:
 - PriorityLevel
 - RecommendedAction
 
-### 6.7 Explainability (Feature 2)
+### 6.7 Explainability
 Implemented in src/explainability.py and integrated in both training and prediction flow.
 
 Capabilities:
@@ -291,7 +292,7 @@ Saved outputs:
 
 ---
 
-## 7. Streamlit Dashboard (Feature 3 Upgrade)
+## 7. Streamlit Dashboard
 
 Implemented in app/streamlit_app.py with 5 pages:
 
@@ -325,96 +326,76 @@ Implemented in app/streamlit_app.py with 5 pages:
     - Recommended action + channel
   - Integrated explanation context from SHAP signals
 
-### 7.1 Output Contract from predict.py
-For a given Customer ID, the prediction response now includes:
-- ClusterLabel
-- PredictedCLV
-- ChurnProbability
-- Decision (Segment, PriorityLevel, RecommendedAction, RecommendedChannel)
-- Explanations (human-readable CLV/churn reasons)
-- ShapTopFeatures (top contributors for CLV and churn)
+### 7.1 Output Contract
+
+The dashboard consumes the API response, not a Python dict. The authoritative
+contract is `src/api/schemas.py`, rendered at `/docs`:
+
+| Field | Meaning |
+|---|---|
+| `customer_id` | Scored customer |
+| `cluster_label` | RFM segment |
+| `predicted_clv` | Expected revenue, next 90 days |
+| `churn_probability` | 0-1 |
+| `decision` | `customer_segment`, `priority_level`, `recommended_action` |
+| `recommendation_actions` | Rule-engine action list |
+| `explanations` | Human-readable CLV and churn reasons |
+| `shap_top_features` | Top contributors per task, with sign |
+| `model_version` | Registry version that produced this |
+| `latency_ms` | Server-side scoring time |
 
 ---
 
 ## 8. How to Run Locally
 
-Run commands from repository root.
+Run from the repository root.
 
-### Step 1: Create and activate virtual environment
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements-dev.txt
 ```
 
-### Step 2: Install dependencies
-```bash
-pip install -r project/requirements.txt
-```
+### Step 1: Preprocess
 
-### Step 3: Preprocess data
 ```bash
 python project/src/data_preprocessing.py \
   --input_csv project/data/online_retail_II.csv \
   --output_csv project/data/processed_online_retail_II.csv
 ```
 
-### Step 4: Train all models
+### Step 2: Train
+
 ```bash
 python project/src/train_models.py \
   --processed_csv project/data/processed_online_retail_II.csv \
   --models_dir project/models \
-  --horizon_days 90 \
-  --churn_days 90
+  --horizon_days 90 --churn_days 90
 ```
 
-### Step 5: Launch dashboard
+### Step 3: Materialise the feature store and registry
+
+Required before the API will serve. Builds `features.parquet`, the dashboard
+aggregates, and `model_registry.json`.
+
 ```bash
+python project/src/build_feature_store.py
+```
+
+### Step 4: Run the service and dashboard
+
+```bash
+# Terminal 1
+uvicorn src.api.main:app --app-dir project --port 8000
+
+# Terminal 2
 streamlit run project/app/streamlit_app.py
 ```
 
-Then open the URL printed in terminal (typically http://localhost:8501).
+API docs at http://localhost:8000/docs, dashboard at http://localhost:8501.
 
 ---
 
-## 9. One-Line Run (after repository is cloned)
-
-```bash
-python3 -m venv .venv && source .venv/bin/activate && pip install -r project/requirements.txt && python project/src/data_preprocessing.py --input_csv project/data/online_retail_II.csv --output_csv project/data/processed_online_retail_II.csv && python project/src/train_models.py --processed_csv project/data/processed_online_retail_II.csv --models_dir project/models --horizon_days 90 --churn_days 90 && streamlit run project/app/streamlit_app.py
-```
-
-Alternative launcher:
-```bash
-./run.sh
-```
-
----
-
-## 10. Notebooks
-
-- notebooks/eda.ipynb: data understanding and quality checks
-- notebooks/rfm_clustering.ipynb: clustering workflow
-- notebooks/clv_regression.ipynb: CLV modeling experiments
-- notebooks/churn_classification.ipynb: churn modeling experiments
-
----
-
-## 11. Deployment (Streamlit Cloud)
-
-1. Push repository to GitHub
-2. Go to Streamlit Community Cloud
-3. Create a new app and select:
-  - Repo: your repository
-  - Branch: main
-  - App file: project/app/streamlit_app.py
-4. Add project/data/online_retail_II.csv to repo or configure remote data access
-5. Deploy
-
-Deployment link:
-- https://ecommerce-customer-analytics-ml-iw5v4ndz7tnjtf3zxweari.streamlit.app
-
----
-
-## 11.5 Docker
+## 9. Docker
 
 Both services run from one image: the FastAPI scoring service and the Streamlit
 dashboard that consumes it over HTTP.
@@ -442,7 +423,34 @@ store, so the 80 MB CSV never ships.
 
 ---
 
-## 11.6 Performance
+---
+
+## 10. Notebooks
+
+- notebooks/eda.ipynb: data understanding and quality checks
+- notebooks/rfm_clustering.ipynb: clustering workflow
+- notebooks/clv_regression.ipynb: CLV modeling experiments
+- notebooks/churn_classification.ipynb: churn modeling experiments
+
+---
+
+## 11. Deployment (Streamlit Cloud)
+
+1. Push repository to GitHub
+2. Go to Streamlit Community Cloud
+3. Create a new app and select:
+  - Repo: your repository
+  - Branch: main (or your default branch)
+  - App file: project/app/streamlit_app.py
+4. Add project/data/online_retail_II.csv to repo or configure remote data access
+5. Deploy
+
+Deployment link:
+- https://ecommerce-customer-analytics-ml-iw5v4ndz7tnjtf3zxweari.streamlit.app
+
+---
+
+## 12. Performance
 
 Measured with `python project/benchmarks/benchmark.py`, 60 runs per path.
 
@@ -456,7 +464,7 @@ Measured with `python project/benchmarks/benchmark.py`, 60 runs per path.
 
 | | Before | After |
 |---|---|---|
-| Inference data file | 79.9 MB CSV | 0.357 MB parquet |
+| Inference data file | 79.9 MB CSV | 357 KB parquet |
 | Feature lookup | full re-aggregation of ~800k rows | O(1) dict lookup |
 
 Inside Docker on macOS, steady state is ~550 ms with SHAP and ~75 ms without —
@@ -470,25 +478,7 @@ figure is what the same service does when a caller does not need explanations.
 
 ---
 
-## 12. Troubleshooting
-
-1. Dashboard opens but shows warning about missing artifacts
-  - Run the training step first to generate files in project/models
-
-2. Module not found errors
-  - Ensure virtual environment is active
-  - Reinstall dependencies from project/requirements.txt
-
-3. Streamlit port issue
-  - Use a custom port:
-    streamlit run project/app/streamlit_app.py --server.port 8503
-
-4. Dataset not found
-  - Confirm project/data/online_retail_II.csv exists
-
----
-
-## 12.4 Tests
+## 13. Tests
 
 ```bash
 pip install -r requirements-dev.txt
@@ -521,7 +511,7 @@ would have been caught by an accuracy metric:
 
 ---
 
-## 12.5 Results
+## 14. Results
 
 Numbers below come from `project/models/training_report.json`, regenerated by
 `train_models.py`. Holdout is a 20% split; CV is 5-fold on the training split.
@@ -592,7 +582,25 @@ history.
 
 ---
 
-## 13. Current Status
+## 15. Troubleshooting
+
+1. Dashboard opens but shows warning about missing artifacts
+  - Run the training step first to generate files in project/models
+
+2. Module not found errors
+  - Ensure virtual environment is active
+  - Reinstall dependencies from project/requirements.txt
+
+3. Streamlit port issue
+  - Use a custom port:
+    streamlit run project/app/streamlit_app.py --server.port 8503
+
+4. Dataset not found
+  - Confirm project/data/online_retail_II.csv exists
+
+---
+
+## 16. Current Status
 
 Implemented and connected end-to-end:
 1. Data preprocessing
@@ -608,7 +616,3 @@ This means you can now enter a Customer ID in the dashboard and directly get:
 - Predicted CLV
 - Churn probability
 - Recommended action
-
-## Branch
- - feature/ml-enhancements-v2
- 
