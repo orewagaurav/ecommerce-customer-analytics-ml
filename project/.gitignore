@@ -4,5 +4,19 @@
 # Ignore data folder contents by default
 data/*
 
-# Keep processed dataset in git for hosted inference/dashboard runtime
-!data/processed_online_retail_II.csv
+# The processed CSV is derivable (scripts/get_data.py) and was ~80 MB in every
+# clone. Inference reads feature_store/*.parquet instead, which is ~1 MB.
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Virtual environment
+.venv/
+
+# macOS
+.DS_Store
+
+# Coverage
+.coverage
+htmlcov/
+.pytest_cache/

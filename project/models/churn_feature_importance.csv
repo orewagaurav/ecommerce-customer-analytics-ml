@@ -1,7 +1,15 @@
 Feature,Importance
-num__Frequency,0.6589920758129334
-cat__ClusterLabel_Loyal Customers,0.45571362320819203
-num__PredictedCLV,0.30908781601909147
-num__Monetary,0.2941269715044126
-cat__ClusterLabel_At Risk,0.08539373124954877
-cat__ClusterLabel_Champions,0.00409768403975668
+num__Recency,0.06248432775323932
+num__PredictedCLV,0.03819296065654813
+num__DistinctProducts,0.036104349746566414
+num__AvgInterPurchaseDays,0.0354411030974645
+num__Monetary,0.03447698308712638
+num__RecentRevenueShare,0.030123574363419503
+num__Frequency,0.02397986689664212
+num__Tenure,0.022872983918312974
+num__PurchaseFrequency,0.02250814330317749
+num__AverageBasketSize,0.02075906779118897
+num__AvgItemsPerInvoice,0.017390063632745444
+cat__ClusterLabel_At Risk,0.014062597632297414
+cat__ClusterLabel_Loyal Customers,0.010237880629530696
+cat__ClusterLabel_Champions,2.8048810446796326e-05

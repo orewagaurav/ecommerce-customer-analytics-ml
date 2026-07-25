@@ -27,14 +27,70 @@ class ClusteringArtifacts:
     inertia_by_k: Dict[int, float]
 
 
+def _inter_purchase_gaps(invoice_totals: pd.DataFrame) -> pd.DataFrame:
+    """Mean days between a customer's consecutive purchase occasions.
+
+    Customers with a single invoice have no observed gap and come back as NaN;
+    the caller substitutes tenure.
+    """
+    ordered = invoice_totals.sort_values(["CustomerID", "InvoiceDate"])
+    ordered = ordered.assign(
+        GapDays=ordered.groupby("CustomerID")["InvoiceDate"].diff().dt.days
+    )
+    return ordered.groupby("CustomerID", as_index=False).agg(
+        AvgInterPurchaseDays=("GapDays", "mean")
+    )
+
+
+def _recent_revenue_share(
+    work: pd.DataFrame, snapshot_date: pd.Timestamp, window_days: int = 90
+) -> pd.DataFrame:
+    """Share of each customer's revenue earned in the trailing window.
+
+    Separates a customer who spent 5000 last month from one who spent the same
+    amount two years ago. Monetary alone cannot tell them apart, and momentum is
+    what distinguishes an active account from a decaying one.
+    """
+    window_start = snapshot_date - pd.Timedelta(days=window_days)
+    recent = work[work["InvoiceDate"] >= window_start]
+
+    totals = work.groupby("CustomerID", as_index=False).agg(
+        TotalRevenue=("TotalAmount", "sum")
+    )
+    recent_totals = recent.groupby("CustomerID", as_index=False).agg(
+        RecentRevenue=("TotalAmount", "sum")
+    )
+
+    merged = totals.merge(recent_totals, on="CustomerID", how="left")
+    merged["RecentRevenue"] = merged["RecentRevenue"].fillna(0.0)
+    merged["RecentRevenueShare"] = np.where(
+        merged["TotalRevenue"] > 0,
+        merged["RecentRevenue"] / merged["TotalRevenue"],
+        0.0,
+    )
+
+    return merged[["CustomerID", "RecentRevenueShare"]]
+
+
 def build_customer_aggregates(transactions: pd.DataFrame) -> pd.DataFrame:
     """Build base customer-level aggregates used across tasks."""
     work = transactions.copy()
     work["InvoiceDate"] = pd.to_datetime(work["InvoiceDate"], errors="coerce")
 
+    # StockCode/Quantity only enrich the behavioural features, so narrower
+    # frames (RFM-only callers, tests) still work with neutral defaults.
+    if "StockCode" not in work.columns:
+        work["StockCode"] = "UNKNOWN"
+    if "Quantity" not in work.columns:
+        work["Quantity"] = 1
+
     invoice_totals = (
         work.groupby(["CustomerID", "Invoice"], as_index=False)
-        .agg(InvoiceTotal=("TotalAmount", "sum"), InvoiceDate=("InvoiceDate", "max"))
+        .agg(
+            InvoiceTotal=("TotalAmount", "sum"),
+            InvoiceDate=("InvoiceDate", "max"),
+            InvoiceItems=("Quantity", "sum"),
+        )
     )
 
     snapshot_date = work["InvoiceDate"].max() + pd.Timedelta(days=1)
@@ -44,18 +100,27 @@ def build_customer_aggregates(transactions: pd.DataFrame) -> pd.DataFrame:
         FirstPurchaseDate=("InvoiceDate", "min"),
         Monetary=("TotalAmount", "sum"),
         Frequency=("Invoice", "nunique"),
+        DistinctProducts=("StockCode", "nunique"),
         Country=("Country", lambda x: x.mode().iloc[0] if not x.mode().empty else "Unknown"),
     )
 
     basket = invoice_totals.groupby("CustomerID", as_index=False).agg(
-        AverageBasketSize=("InvoiceTotal", "mean")
+        AverageBasketSize=("InvoiceTotal", "mean"),
+        AvgItemsPerInvoice=("InvoiceItems", "mean"),
     )
 
     base = base.merge(basket, on="CustomerID", how="left")
     base["Recency"] = (snapshot_date - base["LastPurchaseDate"]).dt.days.astype(float)
+    base["Tenure"] = (snapshot_date - base["FirstPurchaseDate"]).dt.days.astype(float)
 
     customer_age_days = (base["LastPurchaseDate"] - base["FirstPurchaseDate"]).dt.days.clip(lower=1)
     base["PurchaseFrequency"] = base["Frequency"] / customer_age_days
+
+    base = base.merge(_inter_purchase_gaps(invoice_totals), on="CustomerID", how="left")
+    base["AvgInterPurchaseDays"] = base["AvgInterPurchaseDays"].fillna(base["Tenure"])
+
+    base = base.merge(_recent_revenue_share(work, snapshot_date), on="CustomerID", how="left")
+    base["RecentRevenueShare"] = base["RecentRevenueShare"].fillna(0.0)
 
     return base[[
         "CustomerID",
@@ -65,6 +130,11 @@ def build_customer_aggregates(transactions: pd.DataFrame) -> pd.DataFrame:
         "Monetary",
         "AverageBasketSize",
         "PurchaseFrequency",
+        "Tenure",
+        "AvgInterPurchaseDays",
+        "DistinctProducts",
+        "AvgItemsPerInvoice",
+        "RecentRevenueShare",
         "FirstPurchaseDate",
         "LastPurchaseDate",
     ]]

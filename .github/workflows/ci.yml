@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install OpenMP runtime
+        # XGBoost links against libgomp; without it the import fails and the
+        # training code silently falls back to non-XGBoost candidates.
+        run: sudo apt-get update && sudo apt-get install -y libgomp1
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Verify XGBoost is importable
+        # Guards the failure mode where a swallowed ImportError meant no
+        # XGBoost run ever reached the training report.
+        run: python -c "import xgboost; print('xgboost', xgboost.__version__)"
+
+      - name: Build feature store and registry
+        # The processed CSV is no longer tracked (see scripts/get_data.py), so
+        # rebuild only when it is present; otherwise the committed parquet
+        # artifacts are what the API and tests use anyway.
+        run: |
+          if [ -f project/data/processed_online_retail_II.csv ]; then
+            python project/src/build_feature_store.py
+          else
+            echo "Processed CSV absent - using committed feature store artifacts"
+            ls -la project/feature_store/
+          fi
+
+      - name: Verify feature store is usable
+        run: |
+          python -c "
+          import sys; sys.path.insert(0, 'project')
+          from src.feature_store import FeatureStore
+          from pathlib import Path
+          store = FeatureStore(Path('project/feature_store/features.parquet'))
+          print(f'feature store: {len(store.customer_ids())} customers')
+          "
+
+      - name: Lint
+        run: ruff check project/ --select E9,F63,F7,F82
+
+      - name: Run tests
+        run: pytest --cov=src --cov-report=term-missing
