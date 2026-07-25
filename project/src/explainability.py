@@ -36,22 +36,48 @@ def _extract_binary_shap(shap_values: object) -> np.ndarray:
     return values
 
 
-def _safe_explainer(estimator: object, transformed: np.ndarray, task: str) -> np.ndarray:
-    """Compute SHAP values with robust fallback logic."""
+def _unwrap_estimator(estimator: object) -> object:
+    """Return the underlying fitted estimator SHAP can explain directly.
+
+    CLV models are wrapped: `TransformedTargetRegressor` fits in log space, and
+    `TwoStageCLVRegressor` holds a separate classifier and regressor. Both expose
+    the fitted inner regressor as `regressor_`. Explaining that inner model gives
+    contributions in log-revenue space, which preserves the ranking and sign of
+    each feature's effect while keeping a fast tree/linear explainer in play.
+    """
+    inner = getattr(estimator, "regressor_", None)
+    if inner is not None:
+        return _unwrap_estimator(inner)
+    return estimator
+
+
+def _safe_explainer(
+    estimator: object,
+    transformed: np.ndarray,
+    task: str,
+    background: np.ndarray | None = None,
+) -> np.ndarray:
+    """Compute SHAP values with robust fallback logic.
+
+    `background` must be a reference sample distinct from the rows being
+    explained. Scoring a single customer without one makes SHAP explain that row
+    against itself, which yields all-zero contributions.
+    """
     dense = _to_dense(transformed)
+    reference = _to_dense(background) if background is not None else dense
 
     try:
-        explainer = shap.Explainer(estimator, dense)
+        explainer = shap.Explainer(estimator, reference)
         explanation = explainer(dense)
         values = explanation.values
     except Exception:
         # KernelExplainer is slower but supports generic estimators.
-        background = dense[: min(50, len(dense))]
+        fallback_bg = reference[: min(50, len(reference))]
         if task == "classification" and hasattr(estimator, "predict_proba"):
-            kernel = shap.KernelExplainer(estimator.predict_proba, background)
+            kernel = shap.KernelExplainer(estimator.predict_proba, fallback_bg)
             values = kernel.shap_values(dense, silent=True)
         else:
-            kernel = shap.KernelExplainer(estimator.predict, background)
+            kernel = shap.KernelExplainer(estimator.predict, fallback_bg)
             values = kernel.shap_values(dense, silent=True)
 
     if task == "classification":
@@ -146,15 +172,21 @@ def _explain_pipeline_prediction(
     X_sample: pd.DataFrame,
     task: str,
     top_n: int = 3,
+    background: pd.DataFrame | None = None,
 ) -> Dict:
     """Generic SHAP explanation for pipeline model predictions."""
     preprocessor = model.named_steps["preprocessor"]
-    estimator = model.named_steps["model"]
+    estimator = _unwrap_estimator(model.named_steps["model"])
 
     transformed = preprocessor.transform(X_sample)
     feature_names = preprocessor.get_feature_names_out().tolist()
 
-    shap_values = _safe_explainer(estimator, transformed, task=task)
+    transformed_background = (
+        preprocessor.transform(background) if background is not None else None
+    )
+    shap_values = _safe_explainer(
+        estimator, transformed, task=task, background=transformed_background
+    )
     shap_values = np.asarray(shap_values)
     if shap_values.ndim == 1:
         shap_values = shap_values.reshape(1, -1)
@@ -183,26 +215,46 @@ def _explain_pipeline_prediction(
     }
 
 
-def explain_clv_prediction(model: Pipeline, X_sample: pd.DataFrame, top_n: int = 3) -> Dict:
+def explain_clv_prediction(
+    model: Pipeline,
+    X_sample: pd.DataFrame,
+    top_n: int = 3,
+    background: pd.DataFrame | None = None,
+) -> Dict:
     """Explain CLV model prediction using SHAP values.
 
     Returns a dictionary containing:
     - top_features: top SHAP contributors for first sample
     - explanation: human-readable text explanation
     - feature_importance: global SHAP importance over provided sample set
+
+    Pass `background` when scoring a single customer, otherwise contributions
+    collapse to zero.
     """
-    return _explain_pipeline_prediction(model=model, X_sample=X_sample, task="regression", top_n=top_n)
+    return _explain_pipeline_prediction(
+        model=model, X_sample=X_sample, task="regression", top_n=top_n, background=background
+    )
 
 
-def explain_churn_prediction(model: Pipeline, X_sample: pd.DataFrame, top_n: int = 3) -> Dict:
+def explain_churn_prediction(
+    model: Pipeline,
+    X_sample: pd.DataFrame,
+    top_n: int = 3,
+    background: pd.DataFrame | None = None,
+) -> Dict:
     """Explain churn model prediction using SHAP values.
 
     Returns a dictionary containing:
     - top_features: top SHAP contributors for first sample
     - explanation: human-readable text explanation
     - feature_importance: global SHAP importance over provided sample set
+
+    Pass `background` when scoring a single customer, otherwise contributions
+    collapse to zero.
     """
-    return _explain_pipeline_prediction(model=model, X_sample=X_sample, task="classification", top_n=top_n)
+    return _explain_pipeline_prediction(
+        model=model, X_sample=X_sample, task="classification", top_n=top_n, background=background
+    )
 
 
 def save_feature_importance_plot(feature_df: pd.DataFrame, plot_path: Path, title: str) -> None:
