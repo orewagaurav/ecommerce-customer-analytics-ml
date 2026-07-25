@@ -29,7 +29,13 @@ from sklearn.metrics import (
     recall_score,
     roc_auc_score,
 )
-from sklearn.model_selection import KFold, StratifiedKFold, cross_val_score, train_test_split
+from sklearn.model_selection import (
+    KFold,
+    StratifiedKFold,
+    cross_val_predict,
+    cross_val_score,
+    train_test_split,
+)
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from scipy.stats import spearmanr
@@ -58,6 +64,26 @@ except Exception:  # pragma: no cover
 
 
 RANDOM_STATE = 42
+
+# Declared once so the trainers, the saved artifacts and inference cannot drift.
+CLV_NUMERIC_FEATURES = [
+    "Recency",
+    "Frequency",
+    "Monetary",
+    "AverageBasketSize",
+    "PurchaseFrequency",
+    "Tenure",
+    "AvgInterPurchaseDays",
+    "DistinctProducts",
+    "AvgItemsPerInvoice",
+    "RecentRevenueShare",
+]
+CLV_CATEGORICAL_FEATURES = ["Country"]
+CLV_FEATURES = CLV_NUMERIC_FEATURES + CLV_CATEGORICAL_FEATURES
+
+CHURN_NUMERIC_FEATURES = CLV_NUMERIC_FEATURES + ["PredictedCLV"]
+CHURN_CATEGORICAL_FEATURES = ["ClusterLabel"]
+CHURN_FEATURES = CHURN_NUMERIC_FEATURES + CHURN_CATEGORICAL_FEATURES
 
 
 def _save_json(payload: Dict, path: Path) -> None:
@@ -98,6 +124,33 @@ def _top_decile_lift(y_true: pd.Series, y_pred: np.ndarray, decile: float = 0.1)
     return float(y_true[top_idx].mean() / overall_mean)
 
 
+def _out_of_fold_predictions(
+    pipeline: Pipeline,
+    X: pd.DataFrame,
+    y: pd.Series,
+    n_splits: int = 5,
+    clip_negative: bool = False,
+) -> np.ndarray:
+    """Predict every row using a model fitted without that row.
+
+    The churn model consumes PredictedCLV as a feature, and the CLV model is
+    trained against revenue in the same window the churn label comes from
+    (`FutureRevenue > 0` is exactly `ChurnLabel == 0`). Scoring the CLV training
+    rows in-sample therefore leaks the churn label through a memorised
+    prediction. Out-of-fold scoring keeps the feature usable without it.
+    """
+    predictions = cross_val_predict(
+        pipeline,
+        X,
+        y,
+        cv=KFold(n_splits=n_splits, shuffle=True, random_state=RANDOM_STATE),
+        n_jobs=1,
+    )
+    if clip_negative:
+        predictions = np.clip(predictions, 0.0, None)
+    return predictions
+
+
 class TwoStageCLVRegressor(BaseEstimator, RegressorMixin):
     """Zero-inflated CLV model: E[revenue] = P(purchase) x E[spend | purchase].
 
@@ -134,14 +187,8 @@ class TwoStageCLVRegressor(BaseEstimator, RegressorMixin):
 
 def _clv_preprocessor() -> ColumnTransformer:
     """Build the shared CLV feature transformer (dense output for SHAP)."""
-    numeric_features = [
-        "Recency",
-        "Frequency",
-        "Monetary",
-        "AverageBasketSize",
-        "PurchaseFrequency",
-    ]
-    categorical_features = ["Country"]
+    numeric_features = CLV_NUMERIC_FEATURES
+    categorical_features = CLV_CATEGORICAL_FEATURES
 
     return ColumnTransformer(
         transformers=[
@@ -171,14 +218,7 @@ def _train_clv_model(clv_df: pd.DataFrame) -> Tuple[Pipeline, Dict[str, Dict[str
     All metrics are reported on the original currency scale, so log-target and
     two-stage models stay directly comparable to the raw-target baseline.
     """
-    feature_cols = [
-        "Recency",
-        "Frequency",
-        "Monetary",
-        "AverageBasketSize",
-        "PurchaseFrequency",
-        "Country",
-    ]
+    feature_cols = CLV_FEATURES
     target_col = "FutureRevenue"
 
     X = clv_df[feature_cols].copy()
@@ -279,7 +319,7 @@ def _train_churn_model(churn_df: pd.DataFrame) -> Tuple[Pipeline, Dict[str, Dict
     from history up to the cutoff only. The earlier exclusion guarded against a
     recency-threshold label definition that this pipeline no longer uses.
     """
-    feature_cols = ["Recency", "Frequency", "Monetary", "PredictedCLV", "ClusterLabel"]
+    feature_cols = CHURN_FEATURES
     target_col = "ChurnLabel"
 
     X = churn_df[feature_cols].copy()
@@ -289,8 +329,8 @@ def _train_churn_model(churn_df: pd.DataFrame) -> Tuple[Pipeline, Dict[str, Dict
         X, y, test_size=0.2, random_state=RANDOM_STATE, stratify=y
     )
 
-    numeric_features = ["Recency", "Frequency", "Monetary", "PredictedCLV"]
-    categorical_features = ["ClusterLabel"]
+    numeric_features = CHURN_NUMERIC_FEATURES
+    categorical_features = CHURN_CATEGORICAL_FEATURES
 
     preprocessor = ColumnTransformer(
         transformers=[
@@ -419,15 +459,20 @@ def train_all_models(processed_csv: Path, models_dir: Path, horizon_days: int, c
     # Module 2: CLV regression
     clv_df = build_clv_dataset(transactions, horizon_days=horizon_days)
     clv_model, clv_metrics, best_clv_name, clv_X = _train_clv_model(clv_df)
-    clv_feature_cols = ["Recency", "Frequency", "Monetary", "AverageBasketSize", "PurchaseFrequency", "Country"]
-    clv_predictions = clv_model.predict(clv_df[clv_feature_cols])
-
+    clv_feature_cols = CLV_FEATURES
+    # Out-of-fold, not in-sample: PredictedCLV feeds the churn model, and an
+    # in-sample score would carry a memorised copy of the churn label.
     clv_pred_df = clv_df[["CustomerID"]].copy()
-    clv_pred_df["PredictedCLV"] = clv_predictions
+    clv_pred_df["PredictedCLV"] = _out_of_fold_predictions(
+        clv_model,
+        clv_df[clv_feature_cols],
+        clv_df["FutureRevenue"],
+        clip_negative=True,
+    )
 
     clv_shap = explain_clv_prediction(
         model=clv_model,
-        X_sample=clv_df[clv_feature_cols].sample(min(2000, len(clv_df)), random_state=RANDOM_STATE),
+        X_sample=clv_df[clv_feature_cols].sample(min(600, len(clv_df)), random_state=RANDOM_STATE),
         top_n=3,
     )
     clv_feature_importance = clv_shap["feature_importance"]
@@ -462,10 +507,10 @@ def train_all_models(processed_csv: Path, models_dir: Path, horizon_days: int, c
     )
 
     churn_model, churn_metrics, best_churn_name, churn_X = _train_churn_model(churn_df)
-    churn_feature_cols = ["Recency", "Frequency", "Monetary", "PredictedCLV", "ClusterLabel"]
+    churn_feature_cols = CHURN_FEATURES
     churn_shap = explain_churn_prediction(
         model=churn_model,
-        X_sample=churn_df[churn_feature_cols].sample(min(2000, len(churn_df)), random_state=RANDOM_STATE),
+        X_sample=churn_df[churn_feature_cols].sample(min(600, len(churn_df)), random_state=RANDOM_STATE),
         top_n=3,
     )
     churn_feature_importance = churn_shap["feature_importance"]
@@ -491,7 +536,7 @@ def train_all_models(processed_csv: Path, models_dir: Path, horizon_days: int, c
         models_dir / "churn_model_artifacts.joblib",
     )
 
-    customer_predictions = churn_df[["CustomerID", "Recency", "Frequency", "Monetary", "PredictedCLV", "ClusterLabel"]].copy()
+    customer_predictions = churn_df[["CustomerID"] + CHURN_FEATURES].copy()
     customer_predictions["ChurnProbability"] = churn_model.predict_proba(
         customer_predictions[churn_feature_cols]
     )[:, 1]

@@ -42,6 +42,31 @@ def load_artifacts(models_dir: Path) -> Dict:
     }
 
 
+def _model_input(
+    row: pd.Series, feature_columns: List[str], extras: Dict[str, object] | None = None
+) -> pd.DataFrame:
+    """Assemble a one-row frame in the exact column order the model was fit on.
+
+    Driven by the artifact's own `feature_columns` so adding a feature to
+    training cannot leave inference silently scoring the old schema.
+    """
+    extras = extras or {}
+    missing = [
+        column for column in feature_columns if column not in extras and column not in row.index
+    ]
+    if missing:
+        raise ValueError(
+            f"Customer features are missing columns the model expects: {missing}. "
+            "Retrain the models or rebuild the aggregates."
+        )
+
+    values = {
+        column: (extras[column] if column in extras else row[column])
+        for column in feature_columns
+    }
+    return pd.DataFrame([values], columns=feature_columns)
+
+
 def _build_customer_feature_row(transactions: pd.DataFrame, customer_id: int) -> pd.Series:
     """Create single customer row from processed transactions."""
     features = build_customer_aggregates(transactions)
@@ -118,31 +143,18 @@ def predict_customer(customer_id: int, processed_csv: Path, models_dir: Path) ->
     cluster_label = _cluster_for_customer(row, artifacts["rfm"])
 
     clv_model = artifacts["clv"]["model"]
-    clv_input = pd.DataFrame([
-        {
-            "Recency": row["Recency"],
-            "Frequency": row["Frequency"],
-            "Monetary": row["Monetary"],
-            "AverageBasketSize": row["AverageBasketSize"],
-            "PurchaseFrequency": row["PurchaseFrequency"],
-            "Country": row["Country"],
-        }
-    ])
+    clv_input = _model_input(row, artifacts["clv"]["feature_columns"])
     clv_prediction = float(clv_model.predict(clv_input)[0])
     clv_shap = explain_clv_prediction(
         clv_model, clv_input, top_n=3, background=artifacts["clv"].get("background_sample")
     )
 
     churn_model = artifacts["churn"]["model"]
-    churn_input = pd.DataFrame([
-        {
-            "Recency": row["Recency"],
-            "Frequency": row["Frequency"],
-            "Monetary": row["Monetary"],
-            "PredictedCLV": clv_prediction,
-            "ClusterLabel": cluster_label,
-        }
-    ])
+    churn_input = _model_input(
+        row,
+        artifacts["churn"]["feature_columns"],
+        extras={"PredictedCLV": clv_prediction, "ClusterLabel": cluster_label},
+    )
     churn_probability = float(churn_model.predict_proba(churn_input)[:, 1][0])
     churn_shap = explain_churn_prediction(
         churn_model, churn_input, top_n=3, background=artifacts["churn"].get("background_sample")
