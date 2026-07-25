@@ -295,3 +295,67 @@ def test_customer_profile_returns_features(client, known_customer_id):
 
 def test_customer_profile_unknown_customer_returns_404(client):
     assert client.get("/v1/customers/99999999/profile").status_code == 404
+
+
+# --- reports ----------------------------------------------------------------
+
+def test_customer_pdf_report_returns_a_pdf(client, known_customer_id):
+    response = client.get(f"/v1/reports/customer/{known_customer_id}/pdf")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/pdf"
+    # %PDF magic bytes: proves a real document, not an error page with a
+    # convincing content-type.
+    assert response.content[:4] == b"%PDF"
+    assert len(response.content) > 2000
+
+
+def test_customer_pdf_sets_download_filename(client, known_customer_id):
+    response = client.get(f"/v1/reports/customer/{known_customer_id}/pdf")
+    assert f"customer_{known_customer_id}_report.pdf" in response.headers["content-disposition"]
+
+
+def test_customer_pdf_unknown_customer_returns_404(client):
+    assert client.get("/v1/reports/customer/99999999/pdf").status_code == 404
+
+
+def test_customers_excel_workbook_is_valid(client):
+    import io
+    import openpyxl
+
+    response = client.get("/v1/reports/customers/excel?limit=50")
+    assert response.status_code == 200
+    assert response.content[:2] == b"PK"  # xlsx is a zip archive
+
+    workbook = openpyxl.load_workbook(io.BytesIO(response.content))
+    for sheet in ("Summary", "Customer Features", "Monthly Revenue", "Country Revenue"):
+        assert sheet in workbook.sheetnames
+
+
+def test_customers_excel_respects_limit(client):
+    import io
+    import openpyxl
+
+    response = client.get("/v1/reports/customers/excel?limit=25")
+    workbook = openpyxl.load_workbook(io.BytesIO(response.content))
+    # +1 for the header row.
+    assert workbook["Customer Features"].max_row <= 26
+
+
+def test_history_excel_workbook_is_valid(client, known_customer_id):
+    import io
+    import openpyxl
+
+    client.post(f"/v1/predict/{known_customer_id}")
+    response = client.get("/v1/reports/history/excel")
+
+    assert response.status_code == 200
+    workbook = openpyxl.load_workbook(io.BytesIO(response.content))
+    assert "Predictions" in workbook.sheetnames
+
+
+def test_report_endpoints_appear_in_openapi(client):
+    paths = client.get("/openapi.json").json()["paths"]
+
+    assert "/v1/reports/customer/{customer_id}/pdf" in paths
+    assert "/v1/reports/customers/excel" in paths

@@ -116,50 +116,76 @@ def _top_features_for_sample(
     return top_rows
 
 
+def _churn_risk_band(probability: float) -> str:
+    """Bucket a churn probability into the wording used in explanations."""
+    if probability >= 0.7:
+        return "High"
+    if probability >= 0.4:
+        return "Moderate"
+    return "Low"
+
+
 def _human_explanation(
     top_rows: List[Dict[str, float | str]],
     task_name: str,
     raw_sample: pd.Series | None = None,
+    prediction: float | None = None,
 ) -> str:
-    """Build concise human-readable explanation sentence."""
+    """Build a concise explanation sentence that agrees with the prediction.
+
+    `prediction` is the model's own output (churn probability, or predicted
+    revenue). Without it the wording was fixed at "High churn risk" for every
+    customer, so a 7% risk was described as high while the SHAP values beside it
+    all pointed downwards.
+    """
     lowered = [str(row["Feature"]).lower() for row in top_rows]
 
     if task_name == "churn":
-        if raw_sample is not None:
-            recency = float(raw_sample.get("Recency", 0.0))
-            frequency = float(raw_sample.get("Frequency", 0.0))
-            if recency >= 90 and frequency <= 3:
-                return "High churn risk due to low frequency and high recency."
+        band = _churn_risk_band(prediction) if prediction is not None else None
 
         signals: List[str] = []
-        if any("recency" in f for f in lowered):
-            signals.append("high recency")
-        if any("frequency" in f for f in lowered):
-            signals.append("low frequency")
-        if any("monetary" in f or "predictedclv" in f for f in lowered):
-            signals.append("customer value profile")
+        # Name the driver by the direction its contribution actually points.
+        for row in top_rows:
+            feature = str(row["Feature"]).lower()
+            increases = float(row.get("Contribution", 0.0)) > 0
+            if "recency" in feature and "recentrevenue" not in feature:
+                signals.append("high recency" if increases else "recent activity")
+            elif "frequency" in feature:
+                signals.append("low order frequency" if increases else "regular ordering")
+            elif "monetary" in feature or "predictedclv" in feature:
+                signals.append("customer value profile")
+            elif "tenure" in feature:
+                signals.append("account tenure")
 
+        signals = list(dict.fromkeys(signals))
+
+        if band and signals:
+            return f"{band} churn risk, driven by " + " and ".join(signals) + "."
+        if band:
+            return f"{band} churn risk based on the customer's overall behaviour."
         if signals:
-            return "High churn risk influenced by " + " and ".join(signals) + "."
-        return "Churn prediction is driven by the strongest behavioral features."
+            return "Churn risk driven by " + " and ".join(signals) + "."
+        return "Churn prediction is driven by the strongest behavioural features."
 
     if task_name == "clv":
-        if raw_sample is not None:
-            monetary = float(raw_sample.get("Monetary", 0.0))
-            frequency = float(raw_sample.get("Frequency", 0.0))
-            if monetary > 1000 and frequency >= 3:
-                return "High CLV tendency due to strong spend and repeat purchase behavior."
+        level = None
+        if prediction is not None:
+            level = "High" if prediction >= 1000 else "Moderate" if prediction >= 200 else "Low"
 
         signals = []
         if any("monetary" in f for f in lowered):
             signals.append("historical spend")
         if any("frequency" in f for f in lowered):
             signals.append("purchase frequency")
-        if any("recency" in f for f in lowered):
+        if any("recency" in f and "recentrevenue" not in f for f in lowered):
             signals.append("recency pattern")
+        if any("recentrevenueshare" in f for f in lowered):
+            signals.append("recent revenue momentum")
         if any("country" in f for f in lowered):
             signals.append("country profile")
 
+        if level and signals:
+            return f"{level} predicted value, driven by " + " and ".join(signals) + "."
         if signals:
             return "Predicted CLV is primarily influenced by " + " and ".join(signals) + "."
         return "CLV prediction is driven by the strongest transactional features."
@@ -173,6 +199,7 @@ def _explain_pipeline_prediction(
     task: str,
     top_n: int = 3,
     background: pd.DataFrame | None = None,
+    prediction: float | None = None,
 ) -> Dict:
     """Generic SHAP explanation for pipeline model predictions."""
     preprocessor = model.named_steps["preprocessor"]
@@ -206,6 +233,7 @@ def _explain_pipeline_prediction(
         top_rows,
         task_name="churn" if task == "classification" else "clv",
         raw_sample=raw_sample,
+        prediction=prediction,
     )
 
     return {
@@ -220,6 +248,7 @@ def explain_clv_prediction(
     X_sample: pd.DataFrame,
     top_n: int = 3,
     background: pd.DataFrame | None = None,
+    prediction: float | None = None,
 ) -> Dict:
     """Explain CLV model prediction using SHAP values.
 
@@ -232,7 +261,8 @@ def explain_clv_prediction(
     collapse to zero.
     """
     return _explain_pipeline_prediction(
-        model=model, X_sample=X_sample, task="regression", top_n=top_n, background=background
+        model=model, X_sample=X_sample, task="regression", top_n=top_n,
+        background=background, prediction=prediction,
     )
 
 
@@ -241,6 +271,7 @@ def explain_churn_prediction(
     X_sample: pd.DataFrame,
     top_n: int = 3,
     background: pd.DataFrame | None = None,
+    prediction: float | None = None,
 ) -> Dict:
     """Explain churn model prediction using SHAP values.
 
@@ -253,7 +284,8 @@ def explain_churn_prediction(
     collapse to zero.
     """
     return _explain_pipeline_prediction(
-        model=model, X_sample=X_sample, task="classification", top_n=top_n, background=background
+        model=model, X_sample=X_sample, task="classification", top_n=top_n,
+        background=background, prediction=prediction,
     )
 
 

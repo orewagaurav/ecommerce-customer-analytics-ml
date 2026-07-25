@@ -18,7 +18,9 @@ from src.config import Settings, get_settings
 from src.feature_store import FeatureStore
 from src.registry import ModelRegistry
 from src.services.history_service import PredictionHistoryService
+from src.analytics_store import AnalyticsAggregates
 from src.services.prediction_service import PredictionService
+from src.services.report_service import ReportService
 
 
 @dataclass
@@ -44,6 +46,8 @@ class AppContainer:
     registry: ModelRegistry
     prediction_service: PredictionService
     history_service: PredictionHistoryService
+    report_service: ReportService
+    aggregates: AnalyticsAggregates
     metrics: ServiceMetrics
 
 
@@ -53,16 +57,24 @@ def build_container(settings: Settings | None = None) -> AppContainer:
 
     feature_store = FeatureStore(settings.feature_store_path)
     registry = ModelRegistry(settings.registry_path)
+    aggregates = AnalyticsAggregates(settings.analytics_store_path)
+    prediction_service = PredictionService(
+        feature_store=feature_store,
+        models_dir=settings.model_path,
+        registry=registry,
+    )
 
     return AppContainer(
         settings=settings,
         feature_store=feature_store,
         registry=registry,
-        prediction_service=PredictionService(
+        prediction_service=prediction_service,
+        report_service=ReportService(
+            prediction_service=prediction_service,
             feature_store=feature_store,
-            models_dir=settings.model_path,
-            registry=registry,
+            aggregates=aggregates,
         ),
+        aggregates=aggregates,
         history_service=PredictionHistoryService(
             path=settings.history_path,
             enabled=settings.enable_prediction_history,
@@ -103,7 +115,14 @@ def get_metrics(container: Annotated[AppContainer, Depends(get_container)]) -> S
     return container.metrics
 
 
+def get_report_service(
+    container: Annotated[AppContainer, Depends(get_container)],
+) -> ReportService:
+    return container.report_service
+
+
 SettingsDep = Annotated[Settings, Depends(get_settings_dep)]
+ReportServiceDep = Annotated[ReportService, Depends(get_report_service)]
 PredictionServiceDep = Annotated[PredictionService, Depends(get_prediction_service)]
 HistoryServiceDep = Annotated[PredictionHistoryService, Depends(get_history_service)]
 RegistryDep = Annotated[ModelRegistry, Depends(get_registry)]

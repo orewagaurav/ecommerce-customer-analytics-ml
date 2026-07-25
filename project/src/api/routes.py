@@ -9,9 +9,11 @@ async endpoints below only touch in-memory state. Declaring a CPU-bound handler
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Path, Query, status
+from fastapi.responses import Response, StreamingResponse
 
 from src.api.dependencies import (
     FeatureStoreDep,
+    ReportServiceDep,
     HistoryServiceDep,
     MetricsDep,
     PredictionServiceDep,
@@ -275,4 +277,70 @@ async def customer_profile(
     """Feature values behind a prediction, for the Customer 360 view."""
     return CustomerProfileResponse(
         customer_id=int(customer_id), features=service.customer_profile(customer_id)
+    )
+
+
+# --- reports ----------------------------------------------------------------
+
+XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+@router.get(
+    "/reports/customer/{customer_id}/pdf",
+    summary="Per-customer PDF briefing",
+    response_class=Response,
+    responses={
+        200: {"content": {"application/pdf": {}}, "description": "PDF report"},
+        404: {"model": ErrorResponse, "description": "Customer not found"},
+    },
+)
+def customer_pdf_report(
+    reports: ReportServiceDep, customer_id: int = Path(..., ge=0)
+) -> Response:
+    """One-page briefing: profile, model output, SHAP drivers and top products."""
+    payload = reports.customer_pdf(customer_id)
+    logger.info("PDF report served", extra={"customer_id": customer_id, "bytes": len(payload)})
+
+    return Response(
+        content=payload,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="customer_{customer_id}_report.pdf"'
+        },
+    )
+
+
+@router.get(
+    "/reports/customers/excel",
+    summary="Customer workbook (multi-sheet Excel)",
+    response_class=StreamingResponse,
+    responses={200: {"content": {XLSX_MEDIA_TYPE: {}}, "description": "Excel workbook"}},
+)
+def customers_excel_report(reports: ReportServiceDep, limit: int = Query(2000, ge=1, le=20000)):
+    """Summary, customer features, monthly and country revenue, top products."""
+    payload = reports.customers_workbook(limit=limit)
+    return StreamingResponse(
+        iter([payload]),
+        media_type=XLSX_MEDIA_TYPE,
+        headers={"Content-Disposition": 'attachment; filename="customer_analytics.xlsx"'},
+    )
+
+
+@router.get(
+    "/reports/history/excel",
+    summary="Prediction history workbook",
+    response_class=StreamingResponse,
+    responses={200: {"content": {XLSX_MEDIA_TYPE: {}}, "description": "Excel workbook"}},
+)
+def history_excel_report(
+    reports: ReportServiceDep,
+    history: HistoryServiceDep,
+    limit: int = Query(5000, ge=1, le=50000),
+):
+    """The audit log, plus a per-segment summary sheet."""
+    payload = reports.history_workbook(history.read(limit=limit))
+    return StreamingResponse(
+        iter([payload]),
+        media_type=XLSX_MEDIA_TYPE,
+        headers={"Content-Disposition": 'attachment; filename="prediction_history.xlsx"'},
     )

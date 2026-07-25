@@ -157,6 +157,26 @@ def customer_360_page(
                 fig.update_layout(margin=dict(t=48, b=8, l=8, r=8))
                 st.plotly_chart(fig, use_container_width=True)
 
+    st.subheader("Export")
+    export_left, export_right = st.columns(2)
+    with export_left:
+        try:
+            pdf_bytes = api.customer_pdf(int(customer_id))
+            st.download_button(
+                "Download PDF report", data=pdf_bytes,
+                file_name=f"customer_{customer_id}_report.pdf",
+                mime="application/pdf", key="c360_pdf",
+            )
+        except Exception as exc:  # noqa: BLE001
+            st.caption(f"PDF unavailable: {exc}")
+    with export_right:
+        profile_csv = pd.DataFrame([profile]).to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "Download profile CSV", data=profile_csv,
+            file_name=f"customer_{customer_id}_profile.csv",
+            mime="text/csv", key="c360_csv",
+        )
+
     st.caption(
         f"Model {result.get('ModelVersion', 'n/a')} · scored in "
         f"{result.get('LatencyMs', 0):.0f} ms"
@@ -165,7 +185,9 @@ def customer_360_page(
 
 # ------------------------------------------------------------------- Executive
 
-def executive_page(aggregates: Any, predictions: pd.DataFrame, features: pd.DataFrame) -> None:
+def executive_page(
+    aggregates: Any, predictions: pd.DataFrame, features: pd.DataFrame, api: Any = None
+) -> None:
     """Business-level view: where revenue is, and how much of it is at risk."""
     st.title("Executive Dashboard")
     st.caption("Revenue, customers and modelled risk across the book.")
@@ -270,6 +292,27 @@ def executive_page(aggregates: Any, predictions: pd.DataFrame, features: pd.Data
         )
         fig_actions.update_layout(margin=dict(t=16, b=8, l=8, r=8))
         st.plotly_chart(fig_actions, use_container_width=True)
+
+    st.subheader("Export")
+    export_left, export_right = st.columns(2)
+    with export_left:
+        if api is not None:
+            try:
+                st.download_button(
+                    "Download Excel workbook", data=api.customers_excel(limit=5000),
+                    file_name="customer_analytics.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="exec_xlsx",
+                )
+            except Exception as exc:  # noqa: BLE001
+                st.caption(f"Workbook unavailable: {exc}")
+    with export_right:
+        if not predictions.empty:
+            st.download_button(
+                "Download scored customers CSV",
+                data=predictions.to_csv(index=False).encode("utf-8"),
+                file_name="scored_customers.csv", mime="text/csv", key="exec_csv",
+            )
 
     if high_risk_count:
         st.warning(
@@ -471,12 +514,22 @@ def history_page(api: Any) -> None:
     )
     st.dataframe(display, use_container_width=True, hide_index=True)
 
-    st.download_button(
-        "Download as CSV",
-        data=frame.to_csv(index=False).encode("utf-8"),
-        file_name="prediction_history.csv",
-        mime="text/csv",
-    )
+    download_left, download_right = st.columns(2)
+    with download_left:
+        st.download_button(
+            "Download CSV", data=frame.to_csv(index=False).encode("utf-8"),
+            file_name="prediction_history.csv", mime="text/csv", key="hist_csv",
+        )
+    with download_right:
+        try:
+            st.download_button(
+                "Download Excel", data=api.history_excel(limit=int(limit)),
+                file_name="prediction_history.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="hist_xlsx",
+            )
+        except Exception as exc:  # noqa: BLE001
+            st.caption(f"Excel unavailable: {exc}")
 
 
 __all__ = ["customer_360_page", "executive_page", "what_if_page", "history_page"]
