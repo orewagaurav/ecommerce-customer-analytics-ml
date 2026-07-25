@@ -105,6 +105,31 @@ class AnalyticsApiClient:
     def customer_profile(self, customer_id: int) -> dict:
         return self._request("GET", f"/customers/{int(customer_id)}/profile")
 
+    def _download(self, path: str) -> bytes:
+        """Fetch a binary artefact (PDF/XLSX) rather than a JSON body."""
+        url = f"{self._prefix}{path}"
+        try:
+            with httpx.Client(timeout=max(self.timeout, 60.0)) as client:
+                response = client.get(url)
+        except httpx.RequestError as exc:
+            raise ApiError(f"Could not reach the scoring API at {self.base_url}.") from exc
+
+        if response.status_code == 404:
+            raise CustomerNotFound("Customer not found", 404)
+        if response.status_code >= 400:
+            raise ApiError(f"Report generation failed ({response.status_code})", response.status_code)
+
+        return response.content
+
+    def customer_pdf(self, customer_id: int) -> bytes:
+        return self._download(f"/reports/customer/{int(customer_id)}/pdf")
+
+    def customers_excel(self, limit: int = 2000) -> bytes:
+        return self._download(f"/reports/customers/excel?limit={int(limit)}")
+
+    def history_excel(self, limit: int = 5000) -> bytes:
+        return self._download(f"/reports/history/excel?limit={int(limit)}")
+
     def is_available(self) -> bool:
         """Non-raising probe used to render a connection banner."""
         try:

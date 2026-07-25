@@ -201,10 +201,12 @@ class PredictionService:
             clv_shap = explain_clv_prediction(
                 artifacts.clv["model"], clv_input, top_n=3,
                 background=artifacts.clv.get("background_sample"),
+                prediction=predicted_clv,
             )
             churn_shap = explain_churn_prediction(
                 artifacts.churn["model"], churn_input, top_n=3,
                 background=artifacts.churn.get("background_sample"),
+                prediction=churn_probability,
             )
             explanations = {
                 "CLV": [clv_shap["explanation"]] + _format_shap(clv_shap["top_features"]),

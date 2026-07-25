@@ -267,7 +267,13 @@ request.
 | `GET /v1/health` | Liveness + readiness (models and store actually loadable) |
 | `GET /v1/model-info` | Registry: versions, algorithms, metrics, feature lists |
 | `GET /v1/metrics` | Process and lifetime operational counters |
+| `POST /v1/simulate/{customer_id}` | What-if rescoring against overridden features |
+| `GET /v1/history` | Prediction audit log, filterable |
 | `GET /v1/customers` | Scoreable customer IDs |
+| `GET /v1/customers/{id}/profile` | Stored features behind a prediction |
+| `GET /v1/reports/customer/{id}/pdf` | One-customer PDF briefing |
+| `GET /v1/reports/customers/excel` | Multi-sheet Excel workbook |
+| `GET /v1/reports/history/excel` | Audit log workbook |
 | `GET /docs` | Swagger UI |
 
 ```bash
@@ -282,6 +288,32 @@ Errors use one envelope (`error`, `detail`, `request_id`, `context`), and every
 response carries `X-Request-ID` and `X-Response-Time-Ms`.
 
 ---
+
+## Dashboard
+
+Nine pages. The dashboard holds no model code — it reads precomputed aggregates
+and calls the API over HTTP.
+
+| Page | Contents |
+|---|---|
+| Executive | Revenue and customer KPIs, revenue trend, country split, segment mix, churn distribution, top customers, recommended focus, revenue at risk |
+| Overview | Headline KPIs and monthly revenue |
+| Customer 360 | Profile, monthly spend and orders, top products, segment, CLV, churn, SHAP, recommended action, PDF/CSV export |
+| Segmentation | Cluster distribution and RFM scatter |
+| CLV / Churn / Recommendations | Per-customer scoring with SHAP panels |
+| What-if Simulator | Adjust Recency / Frequency / Monetary and rescore against a baseline |
+| Prediction History | Filterable audit log with CSV and Excel export |
+
+## Reports
+
+Generated server-side and streamed, so any consumer — the dashboard, a scheduled
+job, a CRM integration — gets the same artefact from the same endpoint.
+
+- **PDF** per-customer briefing: model output, behavioural profile, SHAP drivers
+  for both tasks, top products
+- **Excel** workbook: summary, customer features, monthly and country revenue,
+  top products; plus an audit-log workbook with a per-segment sheet
+- **CSV** from the dashboard for profiles, scored customers and history
 
 ## Testing
 

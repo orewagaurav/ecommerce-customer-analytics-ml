@@ -372,7 +372,7 @@ def main() -> None:
     segments = load_segments()
 
     if page == "Executive Dashboard":
-        executive_page(AGGREGATES, predictions, load_feature_frame())
+        executive_page(AGGREGATES, predictions, load_feature_frame(), API)
     elif page == "Customer 360":
         customer_360_page(AGGREGATES, load_customer_ids, safe_predict, API)
     elif page == "What-if Simulator":

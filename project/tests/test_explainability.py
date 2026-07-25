@@ -18,6 +18,8 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 from src.explainability import (
+    _churn_risk_band,
+    _human_explanation,
     _unwrap_estimator,
     explain_churn_prediction,
     explain_clv_prediction,
@@ -137,3 +139,57 @@ def test_unwrap_estimator_reaches_inner_regressor():
     leaf = object()
     assert _unwrap_estimator(Wrapper(Wrapper(leaf))) is leaf
     assert _unwrap_estimator(leaf) is leaf
+
+
+# --- explanation wording ----------------------------------------------------
+
+@pytest.mark.parametrize(
+    "probability,expected",
+    [(0.05, "Low"), (0.39, "Low"), (0.4, "Moderate"), (0.69, "Moderate"), (0.7, "High"), (0.95, "High")],
+)
+def test_churn_risk_band_matches_probability(probability, expected):
+    assert _churn_risk_band(probability) == expected
+
+
+def test_low_risk_customer_is_not_described_as_high_risk():
+    """The wording was hardcoded to "High churn risk" regardless of the number,
+    so a 7% customer was labelled high risk beside SHAP values all pointing down."""
+    rows = [
+        {"Feature": "Recency", "Contribution": -0.11, "AbsContribution": 0.11, "Direction": "decrease"},
+        {"Feature": "PredictedCLV", "Contribution": -0.08, "AbsContribution": 0.08, "Direction": "decrease"},
+    ]
+    sentence = _human_explanation(rows, task_name="churn", prediction=0.075)
+
+    assert sentence.startswith("Low churn risk")
+    assert "High churn risk" not in sentence
+
+
+def test_high_risk_customer_is_described_as_high_risk():
+    rows = [
+        {"Feature": "Recency", "Contribution": 0.4, "AbsContribution": 0.4, "Direction": "increase"},
+    ]
+    sentence = _human_explanation(rows, task_name="churn", prediction=0.88)
+
+    assert sentence.startswith("High churn risk")
+
+
+def test_churn_driver_wording_follows_contribution_direction():
+    """A feature pushing risk down must not be described as pushing it up."""
+    downward = _human_explanation(
+        [{"Feature": "Frequency", "Contribution": -0.3, "AbsContribution": 0.3, "Direction": "decrease"}],
+        task_name="churn", prediction=0.1,
+    )
+    upward = _human_explanation(
+        [{"Feature": "Frequency", "Contribution": 0.3, "AbsContribution": 0.3, "Direction": "increase"}],
+        task_name="churn", prediction=0.9,
+    )
+
+    assert "regular ordering" in downward
+    assert "low order frequency" in upward
+
+
+def test_clv_wording_reflects_predicted_value():
+    rows = [{"Feature": "Monetary", "Contribution": 2.0, "AbsContribution": 2.0, "Direction": "increase"}]
+
+    assert _human_explanation(rows, task_name="clv", prediction=9000.0).startswith("High")
+    assert _human_explanation(rows, task_name="clv", prediction=10.0).startswith("Low")
